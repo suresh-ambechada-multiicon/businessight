@@ -1,0 +1,21 @@
+[project]
+name = "businessdatasight"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "deepagents>=0.5.5",
+    "dj-database-url>=3.1.2",
+    "django>=6.0.4",
+    "django-cors-headers>=4.9.0",
+    "django-ninja>=1.6.2",
+    "langchain>=1.2.17",
+    "langchain-anthropic>=1.4.2",
+    "langchain-community>=0.4.1",
+    "langchain-google-genai>=4.2.2",
+    "langchain-openai>=1.2.1",
+    "psycopg2-binary>=2.9.12",
+    "pymysql>=1.1.2",
+    "python-dotenv>=1.2.2",
+]
