@@ -43,7 +43,12 @@ export function SettingsModal({
     "anthropic:claude-3-7-sonnet-latest",
     "anthropic:claude-3-5-sonnet-latest",
     "anthropic:claude-3-5-haiku-latest",
+    "google_genai:gemini-3.1-pro",
+    "google_genai:gemini-3.1-flash-lite",
+    "google_genai:gemini-3.0-flash",
+    "google_genai:gemini-2.5-pro",
     "google_genai:gemini-2.5-flash",
+    "google_genai:gemini-2.5-flash-lite",
     "google_genai:gemini-2.0-flash",
     "google_genai:gemini-1.5-pro",
   ];
@@ -93,8 +98,23 @@ export function SettingsModal({
             <option value="anthropic:claude-3-5-haiku-latest">
               Anthropic (Claude 3.5 Haiku)
             </option>
+            <option value="google_genai:gemini-3.1-pro">
+              Google (Gemini 3.1 Pro)
+            </option>
+            <option value="google_genai:gemini-3.1-flash-lite">
+              Google (Gemini 3.1 Flash Lite)
+            </option>
+            <option value="google_genai:gemini-3.0-flash">
+              Google (Gemini 3.0 Flash)
+            </option>
+            <option value="google_genai:gemini-2.5-pro">
+              Google (Gemini 2.5 Pro)
+            </option>
             <option value="google_genai:gemini-2.5-flash">
               Google (Gemini 2.5 Flash)
+            </option>
+            <option value="google_genai:gemini-2.5-flash-lite">
+              Google (Gemini 2.5 Flash Lite)
             </option>
             <option value="google_genai:gemini-2.0-flash">
               Google (Gemini 2.0 Flash)

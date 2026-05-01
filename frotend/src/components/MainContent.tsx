@@ -80,6 +80,14 @@ const TypewriterText = ({
   );
 };
 
+const formatNumber = (num: number) => {
+  if (typeof num !== "number") return num;
+  if (num >= 1e9) return (num / 1e9).toFixed(1) + "B";
+  if (num >= 1e6) return (num / 1e6).toFixed(1) + "M";
+  if (num >= 1e3) return (num / 1e3).toFixed(1) + "K";
+  return num.toLocaleString();
+};
+
 const ChatInputArea = ({
   onQuery,
   isLoading,
@@ -155,7 +163,7 @@ export function MainContent({
 
     if (type === "bar") {
       return (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={350}>
           <BarChart
             data={chartData}
             margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
@@ -166,8 +174,9 @@ export function MainContent({
               vertical={false}
             />
             <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-            <YAxis tick={{ fill: "var(--text-secondary)" }} />
+            <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
             <Tooltip
+              formatter={formatNumber}
               contentStyle={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-color)",
@@ -190,7 +199,7 @@ export function MainContent({
 
     if (type === "line") {
       return (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={350}>
           <LineChart
             data={chartData}
             margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
@@ -201,8 +210,9 @@ export function MainContent({
               vertical={false}
             />
             <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-            <YAxis tick={{ fill: "var(--text-secondary)" }} />
+            <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
             <Tooltip
+              formatter={formatNumber}
               contentStyle={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-color)",
@@ -227,7 +237,7 @@ export function MainContent({
 
     if (type === "area") {
       return (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={350}>
           <AreaChart
             data={chartData}
             margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
@@ -238,8 +248,9 @@ export function MainContent({
               vertical={false}
             />
             <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-            <YAxis tick={{ fill: "var(--text-secondary)" }} />
+            <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
             <Tooltip
+              formatter={formatNumber}
               contentStyle={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-color)",
@@ -264,15 +275,16 @@ export function MainContent({
 
     if (type === "radar") {
       return (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={350}>
           <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
             <PolarGrid stroke="var(--border-color)" />
             <PolarAngleAxis
               dataKey="name"
               tick={{ fill: "var(--text-secondary)" }}
             />
-            <PolarRadiusAxis tick={{ fill: "var(--text-secondary)" }} />
+            <PolarRadiusAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
             <Tooltip
+              formatter={formatNumber}
               contentStyle={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-color)",
@@ -302,7 +314,7 @@ export function MainContent({
       }));
 
       return (
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={350}>
           <PieChart>
             <Pie
               data={pieData}
@@ -324,6 +336,7 @@ export function MainContent({
               ))}
             </Pie>
             <Tooltip
+              formatter={formatNumber}
               contentStyle={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-color)",
