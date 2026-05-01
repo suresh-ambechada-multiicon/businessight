@@ -16,6 +16,7 @@ dependencies = [
     "langchain-google-genai>=4.2.2",
     "langchain-openai>=1.2.1",
     "psycopg2-binary>=2.9.12",
+    "pymssql>=2.3.13",
     "pymysql>=1.1.2",
     "python-dotenv>=1.2.2",
 ]

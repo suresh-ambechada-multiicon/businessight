@@ -13,6 +13,9 @@ import {
   Area,
   RadarChart,
   Radar,
+  ScatterChart,
+  Scatter,
+  ZAxis,
   PolarGrid,
   PolarAngleAxis,
   PolarRadiusAxis,
@@ -29,6 +32,7 @@ interface Interaction {
   id?: number;
   query: string;
   result: any | null;
+  status?: string;
 }
 
 interface MainContentProps {
@@ -46,37 +50,9 @@ const COLORS = [
   "#ec4899",
 ];
 
-// Typewriter effect component for the latest message
-const TypewriterText = ({
-  text,
-  isActive,
-}: {
-  text: string;
-  isActive: boolean;
-}) => {
-  const [displayedText, setDisplayedText] = useState("");
-
-  useEffect(() => {
-    if (!isActive) {
-      setDisplayedText(text);
-      return;
-    }
-
-    setDisplayedText("");
-    let i = 0;
-    const intervalId = setInterval(() => {
-      setDisplayedText(text.substring(0, i));
-      i++;
-      if (i > text.length) {
-        clearInterval(intervalId);
-      }
-    }, 10); // typing speed
-
-    return () => clearInterval(intervalId);
-  }, [text, isActive]);
-
+const ReportDisplay = ({ text }: { text: string }) => {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayedText}</ReactMarkdown>
+    <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
   );
 };
 
@@ -84,7 +60,7 @@ const formatNumber = (num: number) => {
   if (typeof num !== "number") return num;
   if (num >= 1e9) return (num / 1e9).toFixed(1) + "B";
   if (num >= 1e6) return (num / 1e6).toFixed(1) + "M";
-  if (num >= 1e3) return (num / 1e3).toFixed(1) + "K";
+  if (num >= 1e4) return (num / 1e3).toFixed(1) + "K";
   return num.toLocaleString();
 };
 
@@ -174,7 +150,11 @@ export function MainContent({
               vertical={false}
             />
             <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-            <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
+            <YAxis 
+              tickFormatter={formatNumber} 
+              tick={{ fill: "var(--text-secondary)" }}
+              domain={["auto", "auto"]}
+            />
             <Tooltip
               formatter={formatNumber}
               contentStyle={{
@@ -210,7 +190,11 @@ export function MainContent({
               vertical={false}
             />
             <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-            <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
+            <YAxis 
+              tickFormatter={formatNumber} 
+              tick={{ fill: "var(--text-secondary)" }}
+              domain={["auto", "auto"]}
+            />
             <Tooltip
               formatter={formatNumber}
               contentStyle={{
@@ -282,7 +266,11 @@ export function MainContent({
               dataKey="name"
               tick={{ fill: "var(--text-secondary)" }}
             />
-            <PolarRadiusAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} />
+            <PolarRadiusAxis 
+              tickFormatter={formatNumber} 
+              tick={{ fill: "var(--text-secondary)" }} 
+              domain={["auto", "auto"]}
+            />
             <Tooltip
               formatter={formatNumber}
               contentStyle={{
@@ -307,7 +295,7 @@ export function MainContent({
       );
     }
 
-    if (type === "pie") {
+    if (type === "pie" || type === "doughnut") {
       const pieData = data.labels.map((label: string, i: number) => ({
         name: label,
         value: data.datasets[0].data[i],
@@ -325,6 +313,7 @@ export function MainContent({
                 `${name} ${((percent || 0) * 100).toFixed(0)}%`
               }
               outerRadius={120}
+              innerRadius={type === "doughnut" ? 70 : 0}
               fill="#8884d8"
               dataKey="value"
             >
@@ -345,6 +334,44 @@ export function MainContent({
             />
             <Legend />
           </PieChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (type === "scatter") {
+      return (
+        <ResponsiveContainer width="100%" height={350}>
+          <ScatterChart
+            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+            <XAxis type="category" dataKey="name" name="category" tick={{ fill: "var(--text-secondary)" }} />
+            <YAxis 
+              type="number" 
+              tickFormatter={formatNumber} 
+              tick={{ fill: "var(--text-secondary)" }} 
+              domain={["auto", "auto"]}
+            />
+            <ZAxis type="number" range={[60, 400]} />
+            <Tooltip
+              cursor={{ strokeDasharray: '3 3' }}
+              formatter={formatNumber}
+              contentStyle={{
+                backgroundColor: "var(--bg-surface)",
+                borderColor: "var(--border-color)",
+                color: "var(--text-primary)",
+              }}
+            />
+            <Legend />
+            {data.datasets.map((ds: any, i: number) => (
+              <Scatter
+                key={ds.label}
+                name={ds.label}
+                data={chartData}
+                fill={COLORS[i % COLORS.length]}
+              />
+            ))}
+          </ScatterChart>
         </ResponsiveContainer>
       );
     }
@@ -405,10 +432,7 @@ export function MainContent({
                       )}
 
                       <div className="report-text markdown-content">
-                        <TypewriterText
-                          text={interaction.result.report}
-                          isActive={idx === interactions.length - 1}
-                        />
+                        <ReportDisplay text={interaction.result.report} />
                       </div>
 
                       {interaction.result.chart_config && (
@@ -423,7 +447,7 @@ export function MainContent({
                     <div className="message-content">
                       <div className="loading-indicator-inline">
                         <Loader2 className="spinner" size={20} />
-                        <span>Analyzing data and generating report...</span>
+                        <span className="status-badge">{interaction.status || "Analyzing data..."}</span>
                       </div>
                     </div>
                   </div>

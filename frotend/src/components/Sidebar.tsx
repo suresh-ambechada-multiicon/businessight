@@ -48,7 +48,6 @@ export function Sidebar({
                 className={`history-item ${session.id === currentSessionId ? "active" : ""}`}
                 onClick={() => onSelectSession(session.id)}
               >
-                <MessageSquare size={16} />
                 <span className="history-item-text">{session.title}</span>
               </button>
             ))

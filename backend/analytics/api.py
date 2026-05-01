@@ -27,6 +27,12 @@ def get_history(request):
     return res
 
 
-@api.post("/query/", response=AnalyticsResponse)
+from django.http import StreamingHttpResponse
+import json
+
+@api.post("/query/")
 def query_analytics(request, payload: AnalyticsRequest):
-    return process_analytics_query(payload)
+    return StreamingHttpResponse(
+        process_analytics_query(payload),
+        content_type="text/event-stream"
+    )

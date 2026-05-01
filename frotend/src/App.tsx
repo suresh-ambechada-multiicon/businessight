@@ -90,20 +90,63 @@ function App() {
     setIsLoading(true);
 
     try {
-      const response = await axios.post("http://localhost:8000/api/query/", {
-        query,
-        model,
-        api_key: apiKey,
-        db_url: dbUrl,
-        session_id: currentSessionId,
+      const response = await fetch("http://localhost:8000/api/query/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          model,
+          api_key: apiKey,
+          db_url: dbUrl,
+          session_id: currentSessionId,
+        }),
       });
 
-      // Update the specific interaction with the result
-      setInteractions((prev) =>
-        prev.map((i) =>
-          i.id === newInteractionId ? { ...i, result: response.data } : i,
-        ),
-      );
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedResponse = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                // Handle status updates
+                if (data.status) {
+                  setInteractions((prev) =>
+                    prev.map((i) =>
+                      i.id === newInteractionId
+                        ? { ...i, status: data.status }
+                        : i
+                    )
+                  );
+                }
+
+                // Handle final or partial result
+                if (data.report || data.done) {
+                  setInteractions((prev) =>
+                    prev.map((i) =>
+                      i.id === newInteractionId ? { ...i, result: data } : i
+                    )
+                  );
+                }
+              } catch (e) {
+                console.error("Error parsing stream chunk", e);
+              }
+            }
+          }
+        }
+      }
     } catch (error: any) {
       console.error("Query failed", error);
       alert("Failed to analyze data. Please check your API key and try again.");
@@ -114,10 +157,10 @@ function App() {
             ? {
                 ...i,
                 result: {
-                  report: `An error occurred while generating the report.\n\nError: ${error.response?.data?.message || error.message}`,
+                  report: `An error occurred while generating the report.\n\nError: ${error.message}`,
                 },
               }
-            : i,
+            : i
         ),
       );
     } finally {
