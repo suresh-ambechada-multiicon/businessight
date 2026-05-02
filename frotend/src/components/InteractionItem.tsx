@@ -1,5 +1,5 @@
 import React, { useState, useEffect, memo } from "react";
-import { Database, Loader2, BarChart3 as BarChartIcon, LineChart as LineChartIcon, PieChart as PieChartIcon, AreaChart as AreaChartIcon, Radar as RadarIcon } from "lucide-react";
+import { Database, Loader2, BarChart3 as BarChartIcon, LineChart as LineChartIcon, PieChart as PieChartIcon, AreaChart as AreaChartIcon, Radar as RadarIcon, Layers as StackedIcon, Combine as ComposedIcon, Target as RadialIcon, Activity as ScatterIcon } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -34,7 +34,7 @@ export const InteractionItem = memo(
         {result ? (
           <div className="chat-message ai-message">
             <div className="message-content">
-              {result.sql_query && (
+              {result.sql_query && !result.sql_query.toLowerCase().includes("no sql queries were executed") && (
                 <details className="sql-accordion">
                   <summary>
                     <Database
@@ -119,28 +119,53 @@ export const InteractionItem = memo(
                     {[
                       {
                         type: "bar",
-                        icon: <BarChartIcon size={16} />,
+                        icon: <BarChartIcon size={14} />,
                         title: "Bar Chart",
                       },
                       {
+                        type: "stacked-bar",
+                        icon: <StackedIcon size={14} />,
+                        title: "Stacked Bar",
+                      },
+                      {
                         type: "line",
-                        icon: <LineChartIcon size={16} />,
+                        icon: <LineChartIcon size={14} />,
                         title: "Line Chart",
                       },
                       {
                         type: "area",
-                        icon: <AreaChartIcon size={16} />,
+                        icon: <AreaChartIcon size={14} />,
                         title: "Area Chart",
                       },
                       {
+                        type: "stacked-area",
+                        icon: <StackedIcon size={14} />,
+                        title: "Stacked Area",
+                      },
+                      {
                         type: "pie",
-                        icon: <PieChartIcon size={16} />,
+                        icon: <PieChartIcon size={14} />,
                         title: "Pie Chart",
                       },
                       {
                         type: "radar",
-                        icon: <RadarIcon size={16} />,
+                        icon: <RadarIcon size={14} />,
                         title: "Radar Chart",
+                      },
+                      {
+                        type: "composed",
+                        icon: <ComposedIcon size={14} />,
+                        title: "Composed (Line+Bar)",
+                      },
+                      {
+                        type: "radial",
+                        icon: <RadialIcon size={14} />,
+                        title: "Radial Chart",
+                      },
+                      {
+                        type: "scatter",
+                        icon: <ScatterIcon size={14} />,
+                        title: "Scatter Chart",
                       },
                     ].map((btn) => (
                       <button

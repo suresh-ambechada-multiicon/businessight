@@ -12,7 +12,9 @@ import {
   Radar,
   ScatterChart,
   Scatter,
-  ZAxis,
+  ComposedChart,
+  RadialBarChart,
+  RadialBar,
   PolarGrid,
   PolarAngleAxis,
   PolarRadiusAxis,
@@ -33,12 +35,19 @@ const COLORS = [
   "#f59e0b",
   "#8b5cf6",
   "#ec4899",
+  "#06b6d4",
+  "#84cc16",
 ];
 
 interface ChartDisplayProps {
   type: string;
   data: any;
 }
+
+const truncateLabel = (label: any) => {
+  if (typeof label !== "string") return label;
+  return label.length > 20 ? label.substring(0, 17) + "..." : label;
+};
 
 export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
   const chartData = useMemo(() => {
@@ -58,39 +67,56 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
     backgroundColor: "var(--bg-surface)",
     borderColor: "var(--border-color)",
     color: "var(--text-primary)",
+    borderRadius: "8px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
   };
 
-  if (type === "bar") {
+  const isLargeDataset = chartData.length > 15;
+  const hasLongLabels = chartData.some((d: any) => String(d.name).length > 15);
+
+
+  const xAxisProps: any = {
+    dataKey: "name",
+    tickFormatter: (val: any) => {
+      const formatted = formatXAxisDate(val);
+      return truncateLabel(formatted);
+    },
+    tick: { fill: "var(--text-secondary)", fontSize: 10 },
+    interval: isLargeDataset ? "preserveStartEnd" : 0,
+    angle: (isLargeDataset || hasLongLabels) ? -45 : 0,
+    textAnchor: (isLargeDataset || hasLongLabels) ? "end" : "middle",
+    height: (isLargeDataset || hasLongLabels) ? 80 : 30,
+  };
+
+  if (type === "bar" || type === "stacked-bar") {
     return (
-      <ResponsiveContainer width="100%" height={350}>
+      <ResponsiveContainer width="100%" height={isLargeDataset || hasLongLabels ? 400 : 350}>
         <BarChart
           data={chartData}
-          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+          margin={{ top: 20, right: 30, left: 20, bottom: isLargeDataset || hasLongLabels ? 60 : 5 }}
         >
           <CartesianGrid
             strokeDasharray="3 3"
             stroke="var(--border-color)"
             vertical={false}
           />
-          <XAxis
-            dataKey="name"
-            tickFormatter={formatXAxisDate}
-            tick={{ fill: "var(--text-secondary)" }}
-          />
+          <XAxis {...xAxisProps} />
           <YAxis
             tickFormatter={formatNumber}
-            tick={{ fill: "var(--text-secondary)" }}
+            tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
             domain={[0, "auto"]}
           />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
-          <Legend />
+          {!isLargeDataset && <Legend />}
           {data.datasets.map((ds: any, i: number) => (
             <Bar
               key={ds.label}
               dataKey={ds.label}
+              stackId={type === "stacked-bar" ? "a" : undefined}
               fill={COLORS[i % COLORS.length]}
-              radius={[4, 4, 0, 0]}
+              radius={type === "stacked-bar" ? [0, 0, 0, 0] : [4, 4, 0, 0]}
               isAnimationActive={false}
+              maxBarSize={50}
             />
           ))}
         </BarChart>
@@ -100,36 +126,33 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
 
   if (type === "line") {
     return (
-      <ResponsiveContainer width="100%" height={350}>
+      <ResponsiveContainer width="100%" height={isLargeDataset || hasLongLabels ? 400 : 350}>
         <LineChart
           data={chartData}
-          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+          margin={{ top: 20, right: 30, left: 20, bottom: isLargeDataset || hasLongLabels ? 60 : 5 }}
         >
           <CartesianGrid
             strokeDasharray="3 3"
             stroke="var(--border-color)"
             vertical={false}
           />
-          <XAxis
-            dataKey="name"
-            tickFormatter={formatXAxisDate}
-            tick={{ fill: "var(--text-secondary)" }}
-          />
+          <XAxis {...xAxisProps} />
           <YAxis
             tickFormatter={formatNumber}
-            tick={{ fill: "var(--text-secondary)" }}
+            tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
             domain={["auto", "auto"]}
           />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
-          <Legend />
+          {!isLargeDataset && <Legend />}
           {data.datasets.map((ds: any, i: number) => (
             <Line
               key={ds.label}
               type="monotone"
               dataKey={ds.label}
               stroke={COLORS[i % COLORS.length]}
-              strokeWidth={3}
-              activeDot={{ r: 8 }}
+              strokeWidth={2}
+              dot={!isLargeDataset}
+              activeDot={{ r: 6 }}
               isAnimationActive={false}
             />
           ))}
@@ -138,35 +161,32 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
     );
   }
 
-  if (type === "area") {
+  if (type === "area" || type === "stacked-area") {
     return (
-      <ResponsiveContainer width="100%" height={350}>
+      <ResponsiveContainer width="100%" height={isLargeDataset || hasLongLabels ? 400 : 350}>
         <AreaChart
           data={chartData}
-          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+          margin={{ top: 20, right: 30, left: 20, bottom: isLargeDataset || hasLongLabels ? 60 : 5 }}
         >
           <CartesianGrid
             strokeDasharray="3 3"
             stroke="var(--border-color)"
             vertical={false}
           />
-          <XAxis
-            dataKey="name"
-            tickFormatter={formatXAxisDate}
-            tick={{ fill: "var(--text-secondary)" }}
-          />
+          <XAxis {...xAxisProps} />
           <YAxis
             tickFormatter={formatNumber}
-            tick={{ fill: "var(--text-secondary)" }}
+            tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
             domain={[0, "auto"]}
           />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
-          <Legend />
+          {!isLargeDataset && <Legend />}
           {data.datasets.map((ds: any, i: number) => (
             <Area
               key={ds.label}
               type="monotone"
               dataKey={ds.label}
+              stackId={type === "stacked-area" ? "1" : undefined}
               stroke={COLORS[i % COLORS.length]}
               fill={COLORS[i % COLORS.length]}
               fillOpacity={0.3}
@@ -174,6 +194,30 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
             />
           ))}
         </AreaChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (type === "composed") {
+    return (
+      <ResponsiveContainer width="100%" height={isLargeDataset || hasLongLabels ? 400 : 350}>
+        <ComposedChart
+          data={chartData}
+          margin={{ top: 20, right: 30, left: 20, bottom: isLargeDataset || hasLongLabels ? 60 : 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+          <XAxis {...xAxisProps} />
+          <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
+          <Tooltip contentStyle={tooltipStyle} />
+          {!isLargeDataset && <Legend />}
+          {data.datasets.map((ds: any, i: number) => 
+            i === 0 ? (
+              <Bar key={ds.label} dataKey={ds.label} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]} maxBarSize={40} />
+            ) : (
+              <Line key={ds.label} type="monotone" dataKey={ds.label} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
+            )
+          )}
+        </ComposedChart>
       </ResponsiveContainer>
     );
   }
@@ -186,11 +230,11 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
             data={chartData}
             cx="50%"
             cy="50%"
-            labelLine={false}
-            label={({ name, percent }) =>
-              `${name}: ${(percent ? percent * 100 : 0).toFixed(0)}%`
+            labelLine={!isLargeDataset}
+            label={isLargeDataset ? false : ({ name, percent }) =>
+              `${truncateLabel(name)}: ${(percent ? percent * 100 : 0).toFixed(0)}%`
             }
-            outerRadius={80}
+            outerRadius={100}
             fill="#8884d8"
             dataKey={data.datasets[0].label}
             isAnimationActive={false}
@@ -203,7 +247,7 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
             ))}
           </Pie>
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
-          <Legend />
+          {!isLargeDataset && <Legend />}
         </PieChart>
       </ResponsiveContainer>
     );
@@ -211,11 +255,11 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
 
   if (type === "radar") {
     return (
-      <ResponsiveContainer width="100%" height={350}>
-        <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
+      <ResponsiveContainer width="100%" height={400}>
+        <RadarChart cx="50%" cy="50%" outerRadius="70%" data={chartData}>
           <PolarGrid stroke="var(--border-color)" />
-          <PolarAngleAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-          <PolarRadiusAxis tick={{ fill: "var(--text-secondary)" }} />
+          <PolarAngleAxis dataKey="name" tickFormatter={truncateLabel} tick={{ fill: "var(--text-secondary)", fontSize: 10 }} />
+          <PolarRadiusAxis tick={{ fill: "var(--text-secondary)", fontSize: 10 }} />
           {data.datasets.map((ds: any, i: number) => (
             <Radar
               key={ds.label}
@@ -228,42 +272,61 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
             />
           ))}
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
-          <Legend />
+          {!isLargeDataset && <Legend />}
         </RadarChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (type === "radial") {
+    return (
+      <ResponsiveContainer width="100%" height={400}>
+        <RadialBarChart cx="50%" cy="50%" innerRadius="10%" outerRadius="80%" barSize={isLargeDataset ? 5 : 15} data={chartData}>
+          <RadialBar
+            label={isLargeDataset ? false : { position: 'insideStart', fill: '#fff', formatter: truncateLabel }}
+            background
+            dataKey={data.datasets[0].label}
+          >
+            {chartData.map((_entry: any, index: number) => (
+              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            ))}
+          </RadialBar>
+          {!isLargeDataset && <Legend iconSize={10} layout="vertical" verticalAlign="middle" wrapperStyle={{ right: 0 }} />}
+          <Tooltip contentStyle={tooltipStyle} />
+        </RadialBarChart>
       </ResponsiveContainer>
     );
   }
 
   if (type === "scatter") {
     return (
-      <ResponsiveContainer width="100%" height={350}>
-        <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+      <ResponsiveContainer width="100%" height={isLargeDataset || hasLongLabels ? 400 : 350}>
+        <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: isLargeDataset || hasLongLabels ? 60 : 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
           <XAxis
+            {...xAxisProps}
             type="category"
-            dataKey="name"
-            name="category"
-            tickFormatter={formatXAxisDate}
-            tick={{ fill: "var(--text-secondary)" }}
+            dataKey="x"
           />
           <YAxis
             type="number"
             tickFormatter={formatNumber}
-            tick={{ fill: "var(--text-secondary)" }}
+            tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
             domain={["auto", "auto"]}
           />
-          <ZAxis type="number" range={[60, 400]} />
           <Tooltip
             cursor={{ strokeDasharray: "3 3" }}
-            formatter={formatNumber}
             contentStyle={tooltipStyle}
           />
-          <Legend />
+          {!isLargeDataset && <Legend />}
           {data.datasets.map((ds: any, i: number) => (
             <Scatter
               key={ds.label}
               name={ds.label}
-              data={chartData}
+              data={data.labels.map((label: string, idx: number) => ({
+                x: label,
+                y: ds.data[idx],
+              }))}
               fill={COLORS[i % COLORS.length]}
               isAnimationActive={false}
             />
@@ -273,7 +336,11 @@ export const ChartDisplay = memo(({ type, data }: ChartDisplayProps) => {
     );
   }
 
+
   return (
     <div className="report-text">Chart type {type} not supported yet.</div>
   );
 });
+
+
+
