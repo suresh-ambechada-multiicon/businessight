@@ -2,15 +2,27 @@
 Database connection utilities.
 
 Handles URI normalization (postgres/mysql/mssql driver injection),
-schema detection, and SQLAlchemy engine creation.
+schema detection, SQLAlchemy engine creation with connection pooling,
+and Redis-cached table discovery.
 """
 
 import os
+import time
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 from django.conf import settings
 from langchain_community.utilities import SQLDatabase
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import inspect
+
+from analytics.services.cache import (
+    get_db_uri_hash,
+    get_cached_tables,
+    set_cached_tables,
+    get_or_create_engine,
+)
+from analytics.services.logger import get_logger
+
+logger = get_logger("db")
 
 
 # Prefixes to exclude from "business tables" list
@@ -74,8 +86,8 @@ def detect_active_schema(db_uri: str, engine_args: dict):
     Detect the best schema for databases where the default schema is empty.
     Returns (possibly modified db_uri, active_schema).
     """
-    temp_engine = create_engine(db_uri, **engine_args)
-    db_inspector = inspect(temp_engine)
+    engine = get_or_create_engine(db_uri, engine_args)
+    db_inspector = inspect(engine)
 
     active_schema = None
     if not db_inspector.get_table_names():
@@ -83,8 +95,11 @@ def detect_active_schema(db_uri: str, engine_args: dict):
             if s not in ('information_schema', 'pg_catalog', 'public'):
                 if db_inspector.get_table_names(schema=s):
                     active_schema = s
+                    logger.info("Active schema detected", extra={"data": {
+                        "schema": s,
+                        "db_uri_hash": get_db_uri_hash(db_uri),
+                    }})
                     break
-    temp_engine.dispose()
 
     # For PostgreSQL, set search_path so queries don't need schema prefix
     if active_schema and "postgresql" in db_uri:
@@ -98,10 +113,10 @@ def detect_active_schema(db_uri: str, engine_args: dict):
 
 
 def create_database(db_uri: str, engine_args: dict, active_schema):
-    """Create the LangChain SQLDatabase instance."""
-    return SQLDatabase.from_uri(
-        db_uri,
-        engine_args=engine_args,
+    """Create the LangChain SQLDatabase instance using the pooled engine."""
+    engine = get_or_create_engine(db_uri, engine_args)
+    return SQLDatabase(
+        engine=engine,
         schema=active_schema,
         sample_rows_in_table_info=0,
         view_support=False,
@@ -109,14 +124,45 @@ def create_database(db_uri: str, engine_args: dict, active_schema):
     )
 
 
-def discover_tables(db, active_schema) -> list[str]:
+def discover_tables(db, active_schema, ctx=None) -> list[str]:
     """
     List all business tables in the database, filtering out
-    internal Django/system tables.
+    internal Django/system tables. Uses Redis cache to avoid
+    re-inspecting on every request.
     """
+    db_uri_hash = ctx.db_uri_hash if ctx else ""
+
+    # Try cache first
+    if db_uri_hash:
+        cached = get_cached_tables(db_uri_hash)
+        if cached is not None:
+            logger.info("Tables loaded from cache", extra={"data": {
+                **(ctx.to_dict() if ctx else {}),
+                "table_count": len(cached),
+                "source": "redis_cache",
+            }})
+            return cached
+
+    # Cache miss — inspect the database
+    start = time.time()
     db_inspector = inspect(db._engine)
     all_tables = db_inspector.get_table_names(schema=active_schema)
-    return [t for t in all_tables if not t.startswith(INTERNAL_TABLE_PREFIXES)]
+    usable = [t for t in all_tables if not t.startswith(INTERNAL_TABLE_PREFIXES)]
+    inspect_time = round((time.time() - start) * 1000, 2)
+
+    logger.info("Tables discovered via inspection", extra={"data": {
+        **(ctx.to_dict() if ctx else {}),
+        "total_tables": len(all_tables),
+        "usable_tables": len(usable),
+        "inspect_time_ms": inspect_time,
+        "source": "db_inspector",
+    }})
+
+    # Cache the result
+    if db_uri_hash:
+        set_cached_tables(db_uri_hash, usable)
+
+    return usable
 
 
 def detect_dialect(db_uri: str) -> str:

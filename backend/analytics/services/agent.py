@@ -2,7 +2,8 @@
 AI agent orchestration.
 
 Handles LLM initialization, agent creation, streaming loop,
-and response parsing/recovery.
+and response parsing/recovery. All operations are logged with
+timing and request context.
 """
 
 import json
@@ -18,9 +19,23 @@ from langchain_core.utils.json import parse_partial_json
 
 from analytics.models import QueryHistory
 from analytics.schemas import AnalyticsResponse
+from analytics.services.logger import get_logger, RequestContext
+
+logger = get_logger("agent")
 
 
-def build_schema_context(usable_tables: list[str], active_schema, db, get_table_schema_fn=None) -> str:
+# ── Thread-safe result container ────────────────────────────────────────
+
+class StreamResult:
+    """Mutable container for streaming results. One per request — thread-safe."""
+
+    def __init__(self):
+        self.data: dict = {}
+
+
+# ── Schema Context Builder ──────────────────────────────────────────────
+
+def build_schema_context(usable_tables: list[str], active_schema, db, ctx=None) -> str:
     """
     Build the schema context string that gets injected into the system prompt.
     For small table counts, include full column details.
@@ -50,15 +65,42 @@ def build_schema_context(usable_tables: list[str], active_schema, db, get_table_
             f"Use `search_schema` or `get_table_info` to find specific columns."
         )
 
+    _ctx = ctx.to_dict() if ctx else {}
+    logger.info("Schema context built", extra={"data": {
+        **_ctx,
+        "table_count": len(usable_tables),
+        "mode": "detailed" if len(usable_tables) <= 10 else "names_only",
+        "context_length": len(schema_context),
+    }})
+
     return schema_context
 
 
-def init_llm(model: str, api_key: str):
+# ── LLM Initialization ─────────────────────────────────────────────────
+
+def _detect_provider(model: str) -> str:
+    """
+    Detect the LLM provider from the model string.
+    Supports both explicit format (e.g., 'openai:gpt-4o') and
+    bare model names (e.g., 'gemini-2.0-flash').
+    """
+    if ":" in model:
+        return model.split(":")[0]
+
+    model_lower = model.lower()
+    if any(k in model_lower for k in ("gemini", "gemma", "palm")):
+        return "google_genai"
+    if any(k in model_lower for k in ("claude", "anthropic")):
+        return "anthropic"
+    return "openai"
+
+
+def init_llm(model: str, api_key: str, ctx=None):
     """
     Initialize the LLM and set the appropriate env var for the provider.
     Returns (llm, env_var_name, original_key) for cleanup.
     """
-    provider = model.split(":")[0] if ":" in model else "openai"
+    provider = _detect_provider(model)
     env_key_map = {
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
@@ -70,6 +112,14 @@ def init_llm(model: str, api_key: str):
     if env_var_name:
         original_key = os.environ.get(env_var_name)
         os.environ[env_var_name] = api_key
+
+    _ctx = ctx.to_dict() if ctx else {}
+    logger.info("LLM initialized", extra={"data": {
+        **_ctx,
+        "provider": provider,
+        "model": model,
+        "env_var": env_var_name,
+    }})
 
     llm = init_chat_model(model, temperature=0.1)
     return llm, env_var_name, original_key
@@ -83,6 +133,8 @@ def restore_api_key(env_var_name, original_key):
         else:
             os.environ.pop(env_var_name, None)
 
+
+# ── Message History Builder ─────────────────────────────────────────────
 
 def build_messages(session_id: str, query: str) -> list[dict]:
     """
@@ -104,18 +156,28 @@ def build_messages(session_id: str, query: str) -> list[dict]:
         messages.append({"role": "assistant", "content": interaction.report})
 
     messages.append({"role": "user", "content": query})
+
+    logger.debug("Messages built", extra={"data": {
+        "session_id": session_id,
+        "history_count": len(past_interactions),
+        "total_messages": len(messages),
+    }})
+
     return messages
 
 
-def stream_agent(agent, messages, session_id):
+# ── Streaming Loop ──────────────────────────────────────────────────────
+
+def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=None):
     """
     Generator that streams the agent execution and yields SSE data chunks.
-    Returns the accumulated state for post-processing.
+    Stores accumulated state in result_holder for post-processing.
 
     Yields: SSE data lines (str)
-    Returns via .state attribute on StopIteration: dict with accumulated data
     """
     from django.core.cache import cache
+
+    _ctx = ctx.to_dict() if ctx else {}
 
     full_content = ""
     full_tool_args_str = ""
@@ -123,10 +185,16 @@ def stream_agent(agent, messages, session_id):
     last_non_empty_report = ""
     last_yielded_report = ""
 
+    stream_start = time.time()
+
     try:
         for msg, metadata in agent.stream({"messages": messages}, stream_mode="messages"):
             # Check for cancellation signal
             if cache.get(f"cancel_{session_id}"):
+                logger.info("Query cancelled by user", extra={"data": {
+                    **_ctx,
+                    "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
+                }})
                 yield f"data: {json.dumps({'status': 'Analysis cancelled by user. Stopping backend...'})}\n\n"
                 cache.delete(f"cancel_{session_id}")
                 break
@@ -182,14 +250,30 @@ def stream_agent(agent, messages, session_id):
                         yield f"data: {json.dumps({'status': f'Tool: {tool_name}'})}\n\n"
 
     except GeneratorExit:
+        logger.info("Stream generator closed (client disconnect)", extra={"data": {
+            **_ctx,
+            "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
+        }})
         return
     except Exception as e:
-        print(f"Error in stream loop: {e}")
-        traceback.print_exc()
+        logger.error("Stream loop error", exc_info=True, extra={"data": {
+            **_ctx,
+            "error": str(e),
+            "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
+        }})
         yield f"data: {json.dumps({'status': f'Error in AI execution: {str(e)}'})}\n\n"
 
-    # Store accumulated data for the caller to process
-    stream_agent._result = {
+    stream_elapsed = round((time.time() - stream_start) * 1000, 2)
+    logger.info("Stream completed", extra={"data": {
+        **_ctx,
+        "stream_time_ms": stream_elapsed,
+        "content_length": len(full_content),
+        "tool_args_length": len(full_tool_args_str),
+        "has_report": bool(last_non_empty_report),
+    }})
+
+    # Store accumulated data in the per-request result holder
+    result_holder.data = {
         "full_content": full_content,
         "full_tool_args_str": full_tool_args_str,
         "last_tool_args": last_tool_args,
@@ -197,7 +281,9 @@ def stream_agent(agent, messages, session_id):
     }
 
 
-def extract_final_result(stream_data: dict, tool_state: dict) -> dict:
+# ── Result Extraction ───────────────────────────────────────────────────
+
+def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
     """
     Parse the accumulated stream data and tool state into the final
     structured response dict with report, chart_config, raw_data, sql_query.
@@ -267,6 +353,15 @@ def extract_final_result(stream_data: dict, tool_state: dict) -> dict:
     if not report or report.strip() == "":
         report = "The analysis was completed, but I couldn't generate a verbal summary. Please check the charts and data below."
 
+    _ctx = ctx.to_dict() if ctx else {}
+    logger.info("Result extracted", extra={"data": {
+        **_ctx,
+        "report_length": len(report),
+        "raw_data_rows": len(raw_data) if isinstance(raw_data, list) else 0,
+        "sql_queries_count": len(all_queries),
+        "has_chart": chart_config is not None,
+    }})
+
     return {
         "report": report,
         "chart_config": chart_config,
@@ -274,6 +369,8 @@ def extract_final_result(stream_data: dict, tool_state: dict) -> dict:
         "sql_query": sql_query,
     }
 
+
+# ── Auto Chart Generation ──────────────────────────────────────────────
 
 def auto_generate_chart(chart_config, raw_data) -> dict | None:
     """
@@ -304,6 +401,12 @@ def auto_generate_chart(chart_config, raw_data) -> dict | None:
                     else "bar"
                 )
                 chart_config = {"type": chart_type, "data": {"labels": labels[:30], "datasets": datasets}}
+
+                logger.info("Auto-generated chart", extra={"data": {
+                    "chart_type": chart_type,
+                    "data_points": len(labels),
+                    "datasets": len(datasets),
+                }})
         except Exception:
             pass
 

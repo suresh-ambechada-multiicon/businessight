@@ -1,0 +1,2 @@
+{"timestamp": "2026-05-02 05:57:49,163", "level": "WARNING", "logger": "analytics.security", "message": "SQL blocked: not a SELECT", "query_preview": "DELETE FROM users"}
+{"timestamp": "2026-05-02 05:57:49,163", "level": "WARNING", "logger": "analytics.security", "message": "SQL blocked: dangerous pattern detected", "query_preview": "SELECT * INTO backup FROM users", "blocked_pattern": "\\bINTO\\s+"}

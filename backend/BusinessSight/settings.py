@@ -129,3 +129,63 @@ STATIC_URL = "static/"
 
 # CORS Settings
 CORS_ALLOW_ALL_ORIGINS = True
+
+
+# ── Redis Cache ─────────────────────────────────────────────────────────
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/1"),
+    }
+}
+
+
+# ── Logging ─────────────────────────────────────────────────────────────
+# Ensure logs directory exists
+LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "analytics.services.logger.JSONFormatter",
+        },
+        "console": {
+            "()": "analytics.services.logger.ConsoleFormatter",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "console",
+        },
+        "analytics_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOGS_DIR / "analytics.log",
+            "maxBytes": 10 * 1024 * 1024,  # 10 MB
+            "backupCount": 5,
+            "formatter": "json",
+        },
+        "security_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOGS_DIR / "security.log",
+            "maxBytes": 5 * 1024 * 1024,  # 5 MB
+            "backupCount": 3,
+            "formatter": "json",
+        },
+    },
+    "loggers": {
+        "analytics": {
+            "handlers": ["console", "analytics_file"],
+            "level": "DEBUG" if DEBUG else "INFO",
+            "propagate": False,
+        },
+        "analytics.security": {
+            "handlers": ["console", "security_file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
