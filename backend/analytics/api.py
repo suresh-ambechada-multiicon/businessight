@@ -71,15 +71,25 @@ def get_history(request, limit: int = 2000, offset: int = 0):
                 "result": {
                     "report": h.report,
                     "chart_config": h.chart_config,
-                    # Omit raw_data to prevent massive payload sizes and serialization delays
-                    "raw_data": [],
+                    "raw_data": [], # Lazy load this!
                     "sql_query": h.sql_query,
                     "execution_time": h.execution_time,
+                    "has_data": bool(h.raw_data and len(h.raw_data) > 0)
                 },
             }
         )
     # Reverse the list so the frontend receives them in oldest-first order (newest at the bottom of the chat)
     return res[::-1]
+
+
+@api.get("/history/{query_id}/data/")
+def get_query_data(request, query_id: int):
+    try:
+        h = QueryHistory.objects.get(id=query_id)
+        # Limit to 1000 rows for the detail view to prevent browser crash
+        return {"raw_data": h.raw_data[:1000] if h.raw_data else []}
+    except QueryHistory.DoesNotExist:
+        return {"error": "Not found", "raw_data": []}
 
 
 @api.post("/delete-session/")
