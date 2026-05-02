@@ -19,6 +19,7 @@ class QueryHistory(models.Model):
     chart_config = models.JSONField(null=True, blank=True)
     raw_data = models.JSONField(null=True, blank=True)
     sql_query = models.TextField(default="", blank=True)
+    execution_time = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

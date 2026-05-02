@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Sidebar } from "./components/Sidebar";
 import { MainContent } from "./components/MainContent";
@@ -23,7 +23,9 @@ function App() {
   });
 
   // App State
-  const [currentSessionId, setCurrentSessionId] = useState<string>(() => Date.now().toString());
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    return localStorage.getItem("currentSessionId") || Date.now().toString();
+  });
   const [interactions, setInteractions] = useState<
     { id?: number; session_id?: string; query: string; result: any }[]
   >([]);
@@ -46,19 +48,44 @@ function App() {
     localStorage.setItem("dbUrl", dbUrl);
   }, [model, apiKey, dbUrl]);
 
+  useEffect(() => {
+    localStorage.setItem("currentSessionId", currentSessionId);
+  }, [currentSessionId]);
+
   // Fetch History on Mount
   useEffect(() => {
     const fetchHistory = async () => {
       try {
         const response = await axios.get("http://localhost:8000/api/history/");
-        setInteractions(response.data);
+        // Ensure data is mapped with unique IDs for React keys
+        const mappedData = response.data.map((item: any, idx: number) => ({
+          ...item,
+          id: item.id || `hist-${idx}-${Date.now()}`,
+          session_id: String(item.session_id || "default")
+        }));
         
-        // Automatically set current session if history exists
-        if (response.data.length > 0) {
-          const sessions = Array.from(new Set(response.data.map((item: any) => item.session_id || "default")));
+        setInteractions(prev => {
+          // Merge history into existing state, prioritizing ongoing queries
+          const existingIds = new Set(prev.map(i => i.id));
+          const newItems = mappedData.filter((i: any) => !existingIds.has(i.id));
+          return [...newItems, ...prev].sort((a, b) => {
+             // Keep simple sort by created_at or fallback to insertion order
+             return 0; 
+          });
+        });
+        
+        // Handle session persistence
+        const persistedSid = localStorage.getItem("currentSessionId");
+        const sessionExists = mappedData.some((i: any) => i.session_id === persistedSid);
+
+        if (persistedSid && sessionExists) {
+          setCurrentSessionId(persistedSid);
+        } else if (mappedData.length > 0) {
+          // Default to latest session from history
+          const sessions = Array.from(new Set(mappedData.map((i: any) => i.session_id)));
           const latestSession = sessions[sessions.length - 1];
           if (latestSession) {
-             setCurrentSessionId(latestSession as string);
+            setCurrentSessionId(latestSession as string);
           }
         }
       } catch (error) {
@@ -74,6 +101,34 @@ function App() {
     setCurrentSessionId(Date.now().toString());
   };
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // Notify backend to stop
+    fetch(`http://localhost:8000/api/cancel/?session_id=${currentSessionId}`, { method: "POST" })
+      .catch(err => console.error("Failed to signal backend cancellation", err));
+
+    setIsLoading(false);
+    
+    setInteractions((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      if (!last.result) {
+        return prev.map((i, idx) => 
+          idx === prev.length - 1 
+          ? { ...i, status: "Analysis stopped.", result: { report: "_Analysis cancelled by user._" } } 
+          : i
+        );
+      }
+      return prev;
+    });
+  };
+
   const handleQuery = async (query: string) => {
     if (!apiKey) {
       alert("Please enter your API key in Settings first.");
@@ -81,13 +136,16 @@ function App() {
       return;
     }
 
-    // Optimistically add user query to interactions so it renders above loading indicator
+    // Optimistically add user query to interactions
     const newInteractionId = Date.now();
     setInteractions((prev) => [
       ...prev,
       { id: newInteractionId, session_id: currentSessionId, query, result: null },
     ]);
     setIsLoading(true);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const response = await fetch("http://localhost:8000/api/query/", {
@@ -100,54 +158,69 @@ function App() {
           db_url: dbUrl,
           session_id: currentSessionId,
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      let accumulatedResponse = "";
+      let buffer = "";
 
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          
+          // Keep the last partial line in the buffer
+          buffer = lines.pop() || "";
 
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                
-                // Handle status updates
-                if (data.status) {
-                  setInteractions((prev) =>
-                    prev.map((i) =>
-                      i.id === newInteractionId
-                        ? { ...i, status: data.status }
-                        : i
-                    )
-                  );
-                }
+            const trimmedLine = line.trim();
+            if (!trimmedLine || !trimmedLine.startsWith("data: ")) continue;
 
-                // Handle final or partial result
-                if (data.report || data.done) {
-                  setInteractions((prev) =>
-                    prev.map((i) =>
-                      i.id === newInteractionId ? { ...i, result: data } : i
-                    )
-                  );
-                }
-              } catch (e) {
-                console.error("Error parsing stream chunk", e);
-              }
+            try {
+              const data = JSON.parse(trimmedLine.slice(6));
+              
+              setInteractions((prev) =>
+                prev.map((i) => {
+                  if (i.id !== newInteractionId) return i;
+                  
+                  const updatedInteraction = { ...i };
+                  
+                  if (data.status) {
+                    updatedInteraction.status = data.status;
+                  }
+                  
+                  if (data.report !== undefined || data.done) {
+                    // Merge new result data into existing result, but don't overwrite with empty report
+                    const prevReport = updatedInteraction.result?.report || "";
+                    const newReport = data.report || "";
+                    
+                    updatedInteraction.result = { 
+                      ...(updatedInteraction.result || {}), 
+                      ...data,
+                      report: (data.done && !newReport) ? prevReport : (newReport || prevReport)
+                    };
+                  }
+                  
+                  return updatedInteraction;
+                })
+              );
+            } catch (e) {
+              console.error("Error parsing stream chunk", e, trimmedLine);
             }
           }
         }
       }
     } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('Query aborted');
+        return;
+      }
       console.error("Query failed", error);
       alert("Failed to analyze data. Please check your API key and try again.");
 
@@ -165,6 +238,7 @@ function App() {
       );
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -180,11 +254,11 @@ function App() {
   const sessions = Array.from(sessionMap.entries()).map(([id, title]) => ({
     id,
     title,
-  }));
+  })).reverse(); // Reverse so newest sessions appear at the top
 
   // If current session doesn't exist yet, show "New Chat..."
   if (!sessions.find((s) => s.id === currentSessionId)) {
-    sessions.push({ id: currentSessionId, title: "New Chat..." });
+    sessions.unshift({ id: currentSessionId, title: "New Chat..." });
   }
 
   // Filter messages for current view
@@ -206,6 +280,7 @@ function App() {
 
       <MainContent
         onQuery={handleQuery}
+        onStop={handleStop}
         isLoading={isLoading}
         interactions={currentInteractions}
       />
