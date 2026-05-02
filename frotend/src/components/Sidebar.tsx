@@ -1,4 +1,4 @@
-import { Sun, Moon, Database, Settings, PlusCircle, MessageSquare } from "lucide-react";
+import { Sun, Moon, Database, Settings, PlusCircle } from "lucide-react";
 
 interface Session {
   id: string;
@@ -38,9 +38,11 @@ export function Sidebar({
         </button>
 
         <h3 className="sidebar-title">Recent Chats</h3>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
           {sessions.length === 0 ? (
-            <div className="history-item" style={{ cursor: 'default' }}>No chats yet</div>
+            <div className="history-item" style={{ cursor: "default" }}>
+              No chats yet
+            </div>
           ) : (
             sessions.map((session) => (
               <button

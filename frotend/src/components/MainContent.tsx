@@ -1,7 +1,21 @@
 import React, { useState, useRef, useEffect, useMemo, memo } from "react";
-import { Send, Loader2, Square, BarChart3 as BarChartIcon, LineChart as LineChartIcon, PieChart as PieChartIcon, AreaChart as AreaChartIcon, Radar as RadarIcon, ChevronDown, ChevronUp, Copy, Check, Database } from "lucide-react";
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import {
+  Send,
+  Loader2,
+  Square,
+  BarChart3 as BarChartIcon,
+  LineChart as LineChartIcon,
+  PieChart as PieChartIcon,
+  AreaChart as AreaChartIcon,
+  Radar as RadarIcon,
+  ChevronUp,
+  Database,
+} from "lucide-react";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import {
+  oneDark,
+  oneLight,
+} from "react-syntax-highlighter/dist/esm/styles/prism";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -31,7 +45,7 @@ import {
 } from "recharts";
 
 interface Interaction {
-  id?: number;
+  id?: number | string;
   query: string;
   result: any | null;
   status?: string;
@@ -55,9 +69,7 @@ const COLORS = [
 ];
 
 const ReportDisplay = memo(({ text }: { text: string }) => {
-  return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-  );
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
 });
 
 const RawDataTable = memo(({ data }: { data: any[] }) => {
@@ -67,25 +79,27 @@ const RawDataTable = memo(({ data }: { data: any[] }) => {
     <div className="raw-data-table-wrapper">
       <details>
         <summary className="raw-data-summary">
-          <Database size={16} style={{ marginRight: '8px', opacity: 0.7 }} />
+          <Database size={16} style={{ marginRight: "8px", opacity: 0.7 }} />
           View Data ({data.length} rows)
         </summary>
         <div className="raw-data-scroll">
           <table className="raw-data-table">
             <thead>
               <tr>
-                <th style={{ width: '40px' }}>#</th>
+                <th style={{ width: "40px" }}>#</th>
                 {columns.map((col) => (
-                  <th key={col}>{col.replace(/_/g, ' ')}</th>
+                  <th key={col}>{col.replace(/_/g, " ")}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {data.map((row, i) => (
                 <tr key={i}>
-                  <td style={{ opacity: 0.5, fontSize: '0.75rem' }}>{i + 1}</td>
+                  <td style={{ opacity: 0.5, fontSize: "0.75rem" }}>{i + 1}</td>
                   {columns.map((col) => (
-                    <td key={col}>{row[col] != null ? String(row[col]) : '—'}</td>
+                    <td key={col}>
+                      {row[col] != null ? String(row[col]) : "—"}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -97,8 +111,8 @@ const RawDataTable = memo(({ data }: { data: any[] }) => {
   );
 });
 
-const formatNumber = (num: number) => {
-  if (typeof num !== "number") return num;
+const formatNumber = (num: any) => {
+  if (num == null || typeof num !== "number") return num || "";
   if (num >= 1e9) return (num / 1e9).toFixed(1) + "B";
   if (num >= 1e6) return (num / 1e6).toFixed(1) + "M";
   if (num >= 1e4) return (num / 1e3).toFixed(1) + "K";
@@ -116,37 +130,20 @@ const formatTime = (seconds: number) => {
   return `${hrs}h ${remainingMins}m`;
 };
 
-const highlightSQL = (sql: string) => {
-  if (!sql) return "";
-  const keywords = [
-    "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "LIMIT", "TOP", 
-    "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "ON", "AND", "OR", 
-    "AS", "IN", "NULL", "NOT", "DESC", "ASC", "HAVING", "DISTINCT", 
-    "COUNT", "SUM", "AVG", "MIN", "MAX"
-  ];
-  let highlighted = sql;
-
-  // Highlight strings
-  highlighted = highlighted.replace(/'(.*?)'/g, '<span class="sql-string">\'$1\'</span>');
-
-  // Highlight keywords
-  keywords.sort((a, b) => b.length - a.length).forEach(kw => {
-    const reg = new RegExp(`\\b${kw}\\b`, "gi");
-    highlighted = highlighted.replace(reg, `<span class="sql-keyword">${kw.toUpperCase()}</span>`);
-  });
-
-  // Highlight numbers
-  highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="sql-number">$1</span>');
-
-  return <span dangerouslySetInnerHTML={{ __html: highlighted }} />;
-};
-
 const formatXAxisDate = (tickItem: any) => {
-  if (typeof tickItem === 'string' && tickItem.includes('T') && tickItem.includes('-')) {
+  if (
+    typeof tickItem === "string" &&
+    tickItem.includes("T") &&
+    tickItem.includes("-")
+  ) {
     try {
       const date = new Date(tickItem);
       if (!isNaN(date.getTime())) {
-        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        return date.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
       }
     } catch (e) {
       // Ignore
@@ -155,7 +152,7 @@ const formatXAxisDate = (tickItem: any) => {
   return tickItem;
 };
 
-const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
+const ChartDisplay = memo(({ type, data }: { type: string; data: any }) => {
   const chartData = useMemo(() => {
     if (!data || !data.labels || !data.datasets) return [];
     return data.labels.map((label: string, index: number) => {
@@ -178,14 +175,35 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
   if (type === "bar") {
     return (
       <ResponsiveContainer width="100%" height={350}>
-        <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-          <XAxis dataKey="name" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
-          <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={[0, "auto"]} />
+        <BarChart
+          data={chartData}
+          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="var(--border-color)"
+            vertical={false}
+          />
+          <XAxis
+            dataKey="name"
+            tickFormatter={formatXAxisDate}
+            tick={{ fill: "var(--text-secondary)" }}
+          />
+          <YAxis
+            tickFormatter={formatNumber}
+            tick={{ fill: "var(--text-secondary)" }}
+            domain={[0, "auto"]}
+          />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
           {data.datasets.map((ds: any, i: number) => (
-            <Bar key={ds.label} dataKey={ds.label} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar
+              key={ds.label}
+              dataKey={ds.label}
+              fill={COLORS[i % COLORS.length]}
+              radius={[4, 4, 0, 0]}
+              isAnimationActive={false}
+            />
           ))}
         </BarChart>
       </ResponsiveContainer>
@@ -195,14 +213,37 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
   if (type === "line") {
     return (
       <ResponsiveContainer width="100%" height={350}>
-        <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-          <XAxis dataKey="name" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
-          <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={["auto", "auto"]} />
+        <LineChart
+          data={chartData}
+          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="var(--border-color)"
+            vertical={false}
+          />
+          <XAxis
+            dataKey="name"
+            tickFormatter={formatXAxisDate}
+            tick={{ fill: "var(--text-secondary)" }}
+          />
+          <YAxis
+            tickFormatter={formatNumber}
+            tick={{ fill: "var(--text-secondary)" }}
+            domain={["auto", "auto"]}
+          />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
           {data.datasets.map((ds: any, i: number) => (
-            <Line key={ds.label} type="monotone" dataKey={ds.label} stroke={COLORS[i % COLORS.length]} strokeWidth={3} activeDot={{ r: 8 }} isAnimationActive={false} />
+            <Line
+              key={ds.label}
+              type="monotone"
+              dataKey={ds.label}
+              stroke={COLORS[i % COLORS.length]}
+              strokeWidth={3}
+              activeDot={{ r: 8 }}
+              isAnimationActive={false}
+            />
           ))}
         </LineChart>
       </ResponsiveContainer>
@@ -212,14 +253,37 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
   if (type === "area") {
     return (
       <ResponsiveContainer width="100%" height={350}>
-        <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-          <XAxis dataKey="name" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
-          <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={[0, "auto"]} />
+        <AreaChart
+          data={chartData}
+          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid
+            strokeDasharray="3 3"
+            stroke="var(--border-color)"
+            vertical={false}
+          />
+          <XAxis
+            dataKey="name"
+            tickFormatter={formatXAxisDate}
+            tick={{ fill: "var(--text-secondary)" }}
+          />
+          <YAxis
+            tickFormatter={formatNumber}
+            tick={{ fill: "var(--text-secondary)" }}
+            domain={[0, "auto"]}
+          />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
           {data.datasets.map((ds: any, i: number) => (
-            <Area key={ds.label} type="monotone" dataKey={ds.label} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.3} isAnimationActive={false} />
+            <Area
+              key={ds.label}
+              type="monotone"
+              dataKey={ds.label}
+              stroke={COLORS[i % COLORS.length]}
+              fill={COLORS[i % COLORS.length]}
+              fillOpacity={0.3}
+              isAnimationActive={false}
+            />
           ))}
         </AreaChart>
       </ResponsiveContainer>
@@ -246,7 +310,10 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
             isAnimationActive={false}
           >
             {pieData.map((_entry: any, index: number) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              <Cell
+                key={`cell-${index}`}
+                fill={COLORS[index % COLORS.length]}
+              />
             ))}
           </Pie>
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
@@ -261,13 +328,34 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
       <ResponsiveContainer width="100%" height={350}>
         <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-          <XAxis type="category" dataKey="name" name="category" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
-          <YAxis type="number" tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={["auto", "auto"]} />
+          <XAxis
+            type="category"
+            dataKey="name"
+            name="category"
+            tickFormatter={formatXAxisDate}
+            tick={{ fill: "var(--text-secondary)" }}
+          />
+          <YAxis
+            type="number"
+            tickFormatter={formatNumber}
+            tick={{ fill: "var(--text-secondary)" }}
+            domain={["auto", "auto"]}
+          />
           <ZAxis type="number" range={[60, 400]} />
-          <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={formatNumber} contentStyle={tooltipStyle} />
+          <Tooltip
+            cursor={{ strokeDasharray: "3 3" }}
+            formatter={formatNumber}
+            contentStyle={tooltipStyle}
+          />
           <Legend />
           {data.datasets.map((ds: any, i: number) => (
-            <Scatter key={ds.label} name={ds.label} data={chartData} fill={COLORS[i % COLORS.length]} isAnimationActive={false} />
+            <Scatter
+              key={ds.label}
+              name={ds.label}
+              data={chartData}
+              fill={COLORS[i % COLORS.length]}
+              isAnimationActive={false}
+            />
           ))}
         </ScatterChart>
       </ResponsiveContainer>
@@ -279,144 +367,231 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
       <ResponsiveContainer width="100%" height={350}>
         <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
           <PolarGrid stroke="var(--border-color)" />
-          <PolarAngleAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
-          <PolarRadiusAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={["auto", "auto"]} />
+          <PolarAngleAxis
+            dataKey="name"
+            tick={{ fill: "var(--text-secondary)" }}
+          />
+          <PolarRadiusAxis
+            tickFormatter={formatNumber}
+            tick={{ fill: "var(--text-secondary)" }}
+            domain={["auto", "auto"]}
+          />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
           {data.datasets.map((ds: any, i: number) => (
-            <Radar key={ds.label} name={ds.label} dataKey={ds.label} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.6} isAnimationActive={false} />
+            <Radar
+              key={ds.label}
+              name={ds.label}
+              dataKey={ds.label}
+              stroke={COLORS[i % COLORS.length]}
+              fill={COLORS[i % COLORS.length]}
+              fillOpacity={0.6}
+              isAnimationActive={false}
+            />
           ))}
         </RadarChart>
       </ResponsiveContainer>
     );
   }
 
-  return <div className="report-text">Chart type {type} not supported yet.</div>;
+  return (
+    <div className="report-text">Chart type {type} not supported yet.</div>
+  );
 });
 
-const InteractionItem = memo(({ interaction, idx, chartOverrides, setChartOverrides, theme }: any) => {
-  const result = interaction.result;
-  const currentChartType = chartOverrides[idx] || (result?.chart_config?.type);
+const InteractionItem = memo(
+  ({ interaction, idx, chartOverrides, setChartOverrides, theme }: any) => {
+    const result = interaction.result;
+    const currentChartType = chartOverrides[idx] || result?.chart_config?.type;
 
-  return (
-    <div id={`interaction-${interaction.id || idx}`} className="interaction-wrapper">
-      <div className="chat-message user-message">
-        <div className="message-content">{interaction.query}</div>
-      </div>
+    return (
+      <div
+        id={`interaction-${interaction.id || idx}`}
+        className="interaction-wrapper"
+      >
+        <div className="chat-message user-message">
+          <div className="message-content">{interaction.query}</div>
+        </div>
 
-      {result ? (
-        <div className="chat-message ai-message">
-          <div className="message-content">
-            {result.sql_query && (
-              <details className="sql-accordion">
-                <summary>
-                  <Database size={16} style={{ marginRight: '8px', opacity: 0.7 }} />
-                  View Executed SQL
-                </summary>
-                <div style={{ maxHeight: "250px", overflowY: "auto", padding: "var(--space-3) var(--space-4)", backgroundColor: "var(--bg-surface)" }}>
-                  <ReactMarkdown
-                    components={{
-                      code(props) {
-                        const { children, className, node, ...rest } = props;
-                        const match = /language-(\w+)/.exec(className || '');
-                        return match ? (
-                          <SyntaxHighlighter
-                            {...rest}
-                            children={String(children).replace(/\n$/, '')}
-                            style={theme === 'dark' ? oneDark : oneLight}
-                            language={match[1]}
-                            PreTag="div"
-                            wrapLines={true}
-                            lineProps={{ style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } }}
-                            customStyle={{ margin: 0, padding: 0, background: 'transparent', fontSize: '0.875rem' }}
-                          />
-                        ) : (
-                          <code {...rest} className={className}>
-                            {children}
-                          </code>
-                        );
-                      }
+        {result ? (
+          <div className="chat-message ai-message">
+            <div className="message-content">
+              {result.sql_query && (
+                <details className="sql-accordion">
+                  <summary>
+                    <Database
+                      size={16}
+                      style={{ marginRight: "8px", opacity: 0.7 }}
+                    />
+                    View Executed SQL
+                  </summary>
+                  <div
+                    style={{
+                      maxHeight: "250px",
+                      overflowY: "auto",
+                      padding: "var(--space-3) var(--space-4)",
+                      backgroundColor: "var(--bg-surface)",
                     }}
                   >
-                    {`\`\`\`sql\n${result.sql_query}\n\`\`\``}
-                  </ReactMarkdown>
-                </div>
-              </details>
-            )}
+                    <ReactMarkdown
+                      components={{
+                        code(props: any) {
+                          const { children, className } = props;
+                          const match = /language-(\w+)/.exec(className || "");
+                          return match ? (
+                            <SyntaxHighlighter
+                              children={String(children).replace(/\n$/, "")}
+                              style={theme === "dark" ? oneDark : oneLight}
+                              language={match[1]}
+                              PreTag="div"
+                              wrapLines={true}
+                              lineProps={{
+                                style: {
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-word",
+                                },
+                              }}
+                              customStyle={{
+                                margin: 0,
+                                padding: 0,
+                                background: "transparent",
+                                fontSize: "0.875rem",
+                              }}
+                            />
+                          ) : (
+                            <code className={className}>
+                              {children}
+                            </code>
+                          );
+                        },
+                      }}
+                    >
+                      {`\`\`\`sql\n${result.sql_query}\n\`\`\``}
+                    </ReactMarkdown>
+                  </div>
+                </details>
+              )}
 
-            <div className="report-text markdown-content">
-              <ReportDisplay text={result.report} />
-              {result.execution_time && (
-                <div style={{ marginTop: '10px', fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>
-                  Generated in {formatTime(result.execution_time)}
+              <div className="report-text markdown-content">
+                <ReportDisplay text={result.report} />
+                {result.execution_time && (
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      fontSize: "0.8rem",
+                      color: "var(--text-tertiary)",
+                    }}
+                  >
+                    Generated in {formatTime(result.execution_time)}
+                  </div>
+                )}
+              </div>
+
+              {result.raw_data && result.raw_data.length > 1 && (
+                <RawDataTable data={result.raw_data} />
+              )}
+
+              {result.chart_config && (
+                <div className="chart-wrapper-premium">
+                  <div className="chart-toolbar">
+                    {[
+                      {
+                        type: "bar",
+                        icon: <BarChartIcon size={16} />,
+                        title: "Bar Chart",
+                      },
+                      {
+                        type: "line",
+                        icon: <LineChartIcon size={16} />,
+                        title: "Line Chart",
+                      },
+                      {
+                        type: "area",
+                        icon: <AreaChartIcon size={16} />,
+                        title: "Area Chart",
+                      },
+                      {
+                        type: "pie",
+                        icon: <PieChartIcon size={16} />,
+                        title: "Pie Chart",
+                      },
+                      {
+                        type: "radar",
+                        icon: <RadarIcon size={16} />,
+                        title: "Radar Chart",
+                      },
+                    ].map((btn) => (
+                      <button
+                        key={btn.type}
+                        className={`chart-tool-btn ${currentChartType === btn.type ? "active" : ""}`}
+                        onClick={() =>
+                          setChartOverrides((prev: any) => ({
+                            ...prev,
+                            [idx]: btn.type,
+                          }))
+                        }
+                        title={btn.title}
+                      >
+                        {btn.icon}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="chart-body">
+                    <ChartDisplay
+                      type={currentChartType}
+                      data={result.chart_config.data}
+                    />
+                  </div>
                 </div>
               )}
             </div>
-
-            {result.raw_data && result.raw_data.length > 1 && (
-              <RawDataTable data={result.raw_data} />
-            )}
-
-            {result.chart_config && (
-              <div className="chart-wrapper-premium">
-                <div className="chart-toolbar">
-                  {[
-                    { type: 'bar', icon: <BarChartIcon size={16} />, title: 'Bar Chart' },
-                    { type: 'line', icon: <LineChartIcon size={16} />, title: 'Line Chart' },
-                    { type: 'area', icon: <AreaChartIcon size={16} />, title: 'Area Chart' },
-                    { type: 'pie', icon: <PieChartIcon size={16} />, title: 'Pie Chart' },
-                    { type: 'radar', icon: <RadarIcon size={16} />, title: 'Radar Chart' }
-                  ].map(btn => (
-                    <button 
-                      key={btn.type}
-                      className={`chart-tool-btn ${currentChartType === btn.type ? 'active' : ''}`}
-                      onClick={() => setChartOverrides((prev: any) => ({...prev, [idx]: btn.type}))}
-                      title={btn.title}
-                    >
-                      {btn.icon}
-                    </button>
-                  ))}
-                </div>
-                <div className="chart-body">
-                  <ChartDisplay type={currentChartType} data={result.chart_config.data} />
-                </div>
-              </div>
-            )}
           </div>
-        </div>
-      ) : (
-        <div className="chat-message ai-message">
-          <div className="message-content">
-            <div className="loading-indicator-inline">
-              <details open className="thinking-accordion">
-                <summary className="thinking-header">
-                  <Loader2 className="spinner" size={18} style={{ marginRight: '8px' }} />
-                  <span>Thinking...</span>
-                  <RunningTimer />
-                </summary>
-                {interaction.status && (
-                  <div className="status-text">
-                    {interaction.status}
-                  </div>
-                )}
-              </details>
+        ) : (
+          <div className="chat-message ai-message">
+            <div className="message-content">
+              <div className="loading-indicator-inline">
+                <details open className="thinking-accordion">
+                  <summary className="thinking-header">
+                    <Loader2
+                      className="spinner"
+                      size={18}
+                      style={{ marginRight: "8px" }}
+                    />
+                    <span>Thinking...</span>
+                    <RunningTimer />
+                  </summary>
+                  {interaction.status && (
+                    <div className="status-text">{interaction.status}</div>
+                  )}
+                </details>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
-  );
-});
+        )}
+      </div>
+    );
+  },
+);
 
 const RunningTimer = () => {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const start = Date.now();
-    const interval = setInterval(() => setElapsed((Date.now() - start) / 1000), 100);
+    const interval = setInterval(
+      () => setElapsed((Date.now() - start) / 1000),
+      100,
+    );
     return () => clearInterval(interval);
   }, []);
   return (
-    <span style={{ marginLeft: "auto", fontSize: "0.8rem", color: "var(--text-tertiary)", opacity: 0.8 }}>
+    <span
+      style={{
+        marginLeft: "auto",
+        fontSize: "0.8rem",
+        color: "var(--text-tertiary)",
+        opacity: 0.8,
+      }}
+    >
       {formatTime(elapsed)}
     </span>
   );
@@ -433,7 +608,9 @@ const ChatInputArea = memo(({ onQuery, onStop, isLoading, isInitial }: any) => {
     }
   };
   return (
-    <div className={`input-area ${isInitial ? "input-area-initial" : "input-area-active"}`}>
+    <div
+      className={`input-area ${isInitial ? "input-area-initial" : "input-area-active"}`}
+    >
       <form className="query-container" onSubmit={handleSubmit}>
         <div className="query-input-wrapper">
           <input
@@ -443,8 +620,16 @@ const ChatInputArea = memo(({ onQuery, onStop, isLoading, isInitial }: any) => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />
-          <button type="submit" className="send-button" disabled={!input.trim() && !isLoading}>
-            {isLoading ? <Square size={20} fill="currentColor" /> : <Send size={20} />}
+          <button
+            type="submit"
+            className="send-button"
+            disabled={!input.trim() && !isLoading}
+          >
+            {isLoading ? (
+              <Square size={20} fill="currentColor" />
+            ) : (
+              <Send size={20} />
+            )}
           </button>
         </div>
       </form>
@@ -459,7 +644,9 @@ export const MainContent: React.FC<MainContentProps> = ({
   interactions,
   theme,
 }) => {
-  const [chartOverrides, setChartOverrides] = useState<Record<number, string>>({});
+  const [chartOverrides, setChartOverrides] = useState<Record<number, string>>(
+    {},
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [visibleCount, setVisibleCount] = useState(10);
 
@@ -483,11 +670,15 @@ export const MainContent: React.FC<MainContentProps> = ({
         <div className="chat-container">
           <div className="chat-scroll-area">
             {interactions.length > visibleCount && (
-              <div style={{ textAlign: 'center', padding: '1rem' }}>
-                <button 
+              <div style={{ textAlign: "center", padding: "1rem" }}>
+                <button
                   className="load-more-btn"
-                  onClick={() => setVisibleCount(prev => prev + 10)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() => setVisibleCount((prev) => prev + 10)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
                 >
                   <ChevronUp size={14} />
                   Load previous messages
@@ -495,12 +686,12 @@ export const MainContent: React.FC<MainContentProps> = ({
               </div>
             )}
             {paginatedInteractions.map((interaction, idx) => (
-              <InteractionItem 
-                key={idx} 
-                interaction={interaction} 
-                idx={interactions.indexOf(interaction)} 
-                chartOverrides={chartOverrides} 
-                setChartOverrides={setChartOverrides} 
+              <InteractionItem
+                key={idx}
+                interaction={interaction}
+                idx={interactions.indexOf(interaction)}
+                chartOverrides={chartOverrides}
+                setChartOverrides={setChartOverrides}
                 theme={theme}
               />
             ))}

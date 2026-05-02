@@ -28,7 +28,7 @@ function App() {
     return localStorage.getItem("currentSessionId") || Date.now().toString();
   });
   const [interactions, setInteractions] = useState<
-    { id?: number; session_id?: string; query: string; result: any }[]
+    { id?: number | string; session_id?: string; query: string; result: any; status?: string }[]
   >([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -69,7 +69,7 @@ function App() {
           // Merge history into existing state, prioritizing ongoing queries
           const existingIds = new Set(prev.map(i => i.id));
           const newItems = mappedData.filter((i: any) => !existingIds.has(i.id));
-          return [...newItems, ...prev].sort((a, b) => {
+          return [...newItems, ...prev].sort((_a, _b) => {
              // Keep simple sort by created_at or fallback to insertion order
              return 0; 
           });
