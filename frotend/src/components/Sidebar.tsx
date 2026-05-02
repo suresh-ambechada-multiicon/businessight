@@ -1,4 +1,4 @@
-import { Sun, Moon, Database, Settings, PlusCircle } from "lucide-react";
+import { Sun, Moon, Database, Settings, PlusCircle, Trash2 } from "lucide-react";
 
 interface Session {
   id: string;
@@ -13,6 +13,7 @@ interface SidebarProps {
   currentSessionId: string;
   onSelectSession: (id: string) => void;
   onNewChat: () => void;
+  onDeleteSession: (id: string) => void;
 }
 
 export function Sidebar({
@@ -23,6 +24,7 @@ export function Sidebar({
   currentSessionId,
   onSelectSession,
   onNewChat,
+  onDeleteSession,
 }: SidebarProps) {
   return (
     <aside className="sidebar">
@@ -48,9 +50,17 @@ export function Sidebar({
               <button
                 key={session.id}
                 className={`history-item ${session.id === currentSessionId ? "active" : ""}`}
-                onClick={() => onSelectSession(session.id)}
               >
-                <span className="history-item-text">{session.title}</span>
+                <span className="history-item-text" onClick={() => onSelectSession(session.id)} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.title}</span>
+                <Trash2 
+                  size={14} 
+                  className="delete-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm("Delete this chat?")) onDeleteSession(session.id);
+                  }}
+                  style={{ opacity: 0.4, transition: 'opacity 0.2s' }}
+                />
               </button>
             ))
           )}

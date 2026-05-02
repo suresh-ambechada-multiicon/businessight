@@ -102,6 +102,19 @@ function App() {
     setCurrentSessionId(Date.now().toString());
   };
 
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await axios.post(`http://localhost:8000/api/delete-session/?session_id=${sessionId}`);
+      setInteractions(prev => prev.filter(i => i.session_id !== sessionId));
+      if (currentSessionId === sessionId) {
+        handleNewChat();
+      }
+    } catch (error) {
+      console.error("Failed to delete session", error);
+      alert("Failed to delete session.");
+    }
+  };
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleStop = () => {
@@ -277,6 +290,7 @@ function App() {
         currentSessionId={currentSessionId}
         onSelectSession={setCurrentSessionId}
         onNewChat={handleNewChat}
+        onDeleteSession={handleDeleteSession}
       />
 
       <MainContent

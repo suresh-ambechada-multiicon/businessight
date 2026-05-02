@@ -648,15 +648,27 @@ export const MainContent: React.FC<MainContentProps> = ({
     {},
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [visibleCount, setVisibleCount] = useState(10);
+  const [visibleCount, setVisibleCount] = useState(30);
+  const lastInteractionsLength = useRef(interactions.length);
+  const lastVisibleCount = useRef(visibleCount);
 
   const paginatedInteractions = useMemo(() => {
     return interactions.slice(-visibleCount);
   }, [interactions, visibleCount]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [paginatedInteractions, isLoading]);
+    const interactionAdded = interactions.length > lastInteractionsLength.current;
+    const countChanged = visibleCount !== lastVisibleCount.current;
+
+    // Only scroll to bottom if a new interaction was added or we are currently loading/streaming
+    // DO NOT scroll if we just loaded more historical messages (countChanged)
+    if ((interactionAdded || isLoading) && !countChanged) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+
+    lastInteractionsLength.current = interactions.length;
+    lastVisibleCount.current = visibleCount;
+  }, [interactions.length, isLoading, visibleCount]);
 
   const isInitial = interactions.length === 0 && !isLoading;
 
@@ -673,7 +685,7 @@ export const MainContent: React.FC<MainContentProps> = ({
               <div style={{ textAlign: "center", padding: "1rem" }}>
                 <button
                   className="load-more-btn"
-                  onClick={() => setVisibleCount((prev) => prev + 10)}
+                  onClick={() => setVisibleCount((prev) => prev + 50)}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",

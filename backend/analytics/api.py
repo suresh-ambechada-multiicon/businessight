@@ -57,9 +57,9 @@ def cancel_query(request, session_id: str):
 
 
 @api.get("/history/")
-def get_history(request, limit: int = 50, offset: int = 0):
-    # Fetch most recent history first, with pagination
-    history = QueryHistory.objects.order_by("-created_at")[offset:offset+limit]
+def get_history(request, limit: int = 2000, offset: int = 0):
+    # Fetch most recent history first, with pagination, excluding deleted ones
+    history = QueryHistory.objects.filter(is_deleted=False).order_by("-created_at")[offset:offset+limit]
     res = []
     for h in history:
         res.append(
@@ -80,3 +80,13 @@ def get_history(request, limit: int = 50, offset: int = 0):
         )
     # Reverse the list so the frontend receives them in oldest-first order (newest at the bottom of the chat)
     return res[::-1]
+
+
+@api.post("/delete-session/")
+def delete_session(request, session_id: str):
+    QueryHistory.objects.filter(session_id=session_id).update(is_deleted=True)
+    logger.info("Session soft-deleted", extra={"data": {
+        "session_id": session_id,
+        "client_ip": _get_client_ip(request),
+    }})
+    return {"status": "Session deleted"}
