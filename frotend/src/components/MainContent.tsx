@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, memo } from "react";
 import { Send, Loader2, Square, BarChart3 as BarChartIcon, LineChart as LineChartIcon, PieChart as PieChartIcon, AreaChart as AreaChartIcon, Radar as RadarIcon, ChevronDown, ChevronUp, Copy, Check, Database } from "lucide-react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -42,6 +42,7 @@ interface MainContentProps {
   onStop: () => void;
   isLoading: boolean;
   interactions: Interaction[];
+  theme: "light" | "dark";
 }
 
 const COLORS = [
@@ -140,6 +141,20 @@ const highlightSQL = (sql: string) => {
   return <span dangerouslySetInnerHTML={{ __html: highlighted }} />;
 };
 
+const formatXAxisDate = (tickItem: any) => {
+  if (typeof tickItem === 'string' && tickItem.includes('T') && tickItem.includes('-')) {
+    try {
+      const date = new Date(tickItem);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+  return tickItem;
+};
+
 const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
   const chartData = useMemo(() => {
     if (!data || !data.labels || !data.datasets) return [];
@@ -165,7 +180,7 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
       <ResponsiveContainer width="100%" height={350}>
         <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-          <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
+          <XAxis dataKey="name" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
           <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={[0, "auto"]} />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
@@ -182,7 +197,7 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
       <ResponsiveContainer width="100%" height={350}>
         <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-          <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
+          <XAxis dataKey="name" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
           <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={["auto", "auto"]} />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
@@ -199,7 +214,7 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
       <ResponsiveContainer width="100%" height={350}>
         <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-          <XAxis dataKey="name" tick={{ fill: "var(--text-secondary)" }} />
+          <XAxis dataKey="name" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
           <YAxis tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={[0, "auto"]} />
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
           <Legend />
@@ -246,7 +261,7 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
       <ResponsiveContainer width="100%" height={350}>
         <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-          <XAxis type="category" dataKey="name" name="category" tick={{ fill: "var(--text-secondary)" }} />
+          <XAxis type="category" dataKey="name" name="category" tickFormatter={formatXAxisDate} tick={{ fill: "var(--text-secondary)" }} />
           <YAxis type="number" tickFormatter={formatNumber} tick={{ fill: "var(--text-secondary)" }} domain={["auto", "auto"]} />
           <ZAxis type="number" range={[60, 400]} />
           <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={formatNumber} contentStyle={tooltipStyle} />
@@ -279,12 +294,12 @@ const ChartDisplay = memo(({ type, data }: { type: string, data: any }) => {
   return <div className="report-text">Chart type {type} not supported yet.</div>;
 });
 
-const InteractionItem = memo(({ interaction, idx, chartOverrides, setChartOverrides }: any) => {
+const InteractionItem = memo(({ interaction, idx, chartOverrides, setChartOverrides, theme }: any) => {
   const result = interaction.result;
   const currentChartType = chartOverrides[idx] || (result?.chart_config?.type);
 
   return (
-    <div className="interaction-wrapper">
+    <div id={`interaction-${interaction.id || idx}`} className="interaction-wrapper">
       <div className="chat-message user-message">
         <div className="message-content">{interaction.query}</div>
       </div>
@@ -308,7 +323,7 @@ const InteractionItem = memo(({ interaction, idx, chartOverrides, setChartOverri
                           <SyntaxHighlighter
                             {...rest}
                             children={String(children).replace(/\n$/, '')}
-                            style={vscDarkPlus}
+                            style={theme === 'dark' ? oneDark : oneLight}
                             language={match[1]}
                             PreTag="div"
                             wrapLines={true}
@@ -442,6 +457,7 @@ export const MainContent: React.FC<MainContentProps> = ({
   onStop,
   isLoading,
   interactions,
+  theme,
 }) => {
   const [chartOverrides, setChartOverrides] = useState<Record<number, string>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -485,6 +501,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                 idx={interactions.indexOf(interaction)} 
                 chartOverrides={chartOverrides} 
                 setChartOverrides={setChartOverrides} 
+                theme={theme}
               />
             ))}
             <div ref={messagesEndRef} />

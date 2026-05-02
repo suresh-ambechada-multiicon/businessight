@@ -36,6 +36,17 @@
     flex-shrink: 0;
 }
 
+.right-sidebar {
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+    padding: var(--space-4);
+    gap: var(--space-4);
+    flex-shrink: 0;
+}
+
 .sidebar-header {
     padding-bottom: var(--space-4);
     border-bottom: 1px solid var(--border-color);

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Sidebar } from "./components/Sidebar";
 import { MainContent } from "./components/MainContent";
+import { RightSidebar } from "./components/RightSidebar";
 import { SettingsModal } from "./components/SettingsModal";
 import "./App.css";
 
@@ -283,7 +284,10 @@ function App() {
         onStop={handleStop}
         isLoading={isLoading}
         interactions={currentInteractions}
+        theme={theme}
       />
+
+      <RightSidebar interactions={currentInteractions} />
 
       <SettingsModal
         isOpen={isSettingsOpen}
