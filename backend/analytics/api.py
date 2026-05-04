@@ -31,17 +31,51 @@ def _get_client_ip(request) -> str:
     return request.META.get("REMOTE_ADDR", "unknown")
 
 
+import redis
+from django.conf import settings
+from analytics.tasks import process_query_task
+from analytics.services.llm_config import MODEL_REGISTRY
+
+@api.get("/models/")
+def list_models(request):
+    return [
+        {
+            "id": model_id,
+            "provider": config.provider,
+            "name": model_id.split(":")[-1].replace("-", " ").title()
+        }
+        for model_id, config in MODEL_REGISTRY.items()
+    ]
+
 @api.post("/query/")
 def query_analytics(request, payload: AnalyticsRequest):
-    ctx = RequestContext(
-        session_id=payload.session_id,
-        client_ip=_get_client_ip(request),
-        model=payload.model,
-        query=payload.query,
-        db_uri_hash=get_db_uri_hash(payload.db_url) if payload.db_url else "",
-    )
+    # Enqueue task and return task_id
+    task = process_query_task.delay(payload.dict(), _get_client_ip(request))
+    return {"task_id": task.id}
+
+@api.get("/stream/{task_id}/")
+def stream_results(request, task_id: str):
+    def event_stream():
+        redis_client = redis.from_url(settings.CELERY_BROKER_URL)
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe(f"task:{task_id}")
+        for message in pubsub.listen():
+            if message["type"] == "message":
+                data_str = message["data"].decode("utf-8")
+                yield f"data: {data_str}\n\n"
+                try:
+                    data = json.loads(data_str)
+                    if data.get("event") in ("done", "result", "error"):
+                        # If done or error, we can stop the stream
+                        if data.get("event") == "done" or data.get("event") == "error":
+                            pass
+                        # Actually, process_analytics_query yields "result" and then we append {"event": "done"} in tasks.py
+                        if data.get("event") == "done":
+                            break
+                except Exception:
+                    pass
     return StreamingHttpResponse(
-        process_analytics_query(payload, ctx),
+        event_stream(),
         content_type="text/event-stream",
     )
 

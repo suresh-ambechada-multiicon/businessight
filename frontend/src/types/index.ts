@@ -3,6 +3,11 @@ export interface Interaction {
   query: string;
   result: InteractionResult | null;
   status?: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost: number;
+  };
 }
 
 export interface InteractionResult {

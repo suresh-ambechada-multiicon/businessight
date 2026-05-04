@@ -20,6 +20,9 @@ class QueryHistory(models.Model):
     raw_data = models.JSONField(null=True, blank=True)
     sql_query = models.TextField(default="", blank=True)
     execution_time = models.FloatField(null=True, blank=True)
+    input_tokens = models.IntegerField(null=True, blank=True)
+    output_tokens = models.IntegerField(null=True, blank=True)
+    estimated_cost = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)
 

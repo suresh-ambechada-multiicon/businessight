@@ -8,6 +8,7 @@ Every step is logged with timing and request context.
 
 import json
 import time
+import os
 
 from analytics.services.db import (
     normalize_db_uri,
@@ -22,13 +23,14 @@ from analytics.services.agent import (
     StreamResult,
     build_schema_context,
     init_llm,
-    restore_api_key,
     build_messages,
     stream_agent,
     extract_final_result,
     auto_generate_chart,
 )
 from analytics.models import QueryHistory
+from analytics.services.llm_config import get_model_config
+from analytics.services.tokens import estimate_query_budget, count_tokens
 from analytics.services.prompts import SYSTEM_PROMPT
 from analytics.schemas import AnalyticsRequest, AnalyticsResponse
 from analytics.services.logger import get_logger, RequestContext
@@ -74,9 +76,9 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
     discover_time = round((time.time() - step_start) * 1000, 2)
 
     if not usable_tables:
-        yield f"data: {json.dumps({'status': 'Connected to database, but found no business tables yet. Please wait for data migration to finish.'})}\n\n"
+        yield {"event": "status", "data": {"message": "Connected to database, but found no business tables yet. Please wait for data migration to finish."}}
     else:
-        yield f"data: {json.dumps({'status': f'Connected to database. Discovered {len(usable_tables)} business tables.'})}\n\n"
+        yield {"event": "status", "data": {"message": f"Connected to database. Discovered {len(usable_tables)} business tables."}}
 
     logger.info("Discovery complete", extra={"data": {
         **ctx.to_dict(),
@@ -84,16 +86,21 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         "discover_time_ms": discover_time,
     }})
 
-    # ── 3. Create Tools ─────────────────────────────────────────────────
-    tools, tool_state = create_tools(db, usable_tables, ctx)
+    model_config = get_model_config(payload.model)
 
-    # ── 4. Build Prompt ─────────────────────────────────────────────────
+    # ── 4. Build Prompt & Messages ─────────────────────────────────────────────────
     schema_context = build_schema_context(usable_tables, active_schema, db, ctx)
     db_dialect = detect_dialect(db_uri)
     formatted_prompt = SYSTEM_PROMPT.format(db_schema=schema_context, db_dialect=db_dialect)
+    messages = build_messages(payload.session_id, payload.query)
+
+    budget = estimate_query_budget(model_config, formatted_prompt, messages)
+
+    # ── 3. Create Tools ─────────────────────────────────────────────────
+    tools, tool_state = create_tools(db, usable_tables, ctx, budget)
 
     # ── 5. Initialize LLM ──────────────────────────────────────────────
-    llm, env_var_name, original_key = init_llm(payload.model, payload.api_key, ctx)
+    llm = init_llm(payload.model, payload.api_key, payload.llm_config, ctx)
 
     try:
         # ── 6. Create Agent ─────────────────────────────────────────────
@@ -104,8 +111,8 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             response_format=AnalyticsResponse,
         )
 
-        # ── 7. Build Messages ──────────────────────────────────────────
-        messages = build_messages(payload.session_id, payload.query)
+        # Messages are built before budget calculation, no need to build again
+        # messages = build_messages(payload.session_id, payload.query)
 
         # ── 8. Create History Record ───────────────────────────────────
         start_time = time.time()
@@ -119,7 +126,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             execution_time=0.0,
         )
 
-        yield f"data: {json.dumps({'status': 'Initializing AI agent...'})}\n\n"
+        yield {"event": "status", "data": {"message": "Initializing AI agent..."}}
 
         # ── 9. Stream Agent Execution ──────────────────────────────────
         result_holder = StreamResult()
@@ -141,7 +148,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # ── 10. Extract & Finalize Result ──────────────────────────────
         result = extract_final_result(stream_data, tool_state, ctx)
-        result["chart_config"] = auto_generate_chart(result["chart_config"], result["raw_data"])
+        result["chart_config"] = auto_generate_chart(result["chart_config"], result["raw_data"], query=query)
 
         exec_time = time.time() - start_time
 
@@ -154,14 +161,26 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         history_entry.save()
 
         # ── 12. Yield Final Result ─────────────────────────────────────
-        yield f"data: {json.dumps({
-            'report': result['report'],
-            'chart_config': result['chart_config'],
-            'raw_data': result['raw_data'],
-            'sql_query': result['sql_query'],
-            'execution_time': exec_time,
-            'done': True,
-        })}\n\n"
+        yield {"event": "result", "data": {
+            "report": result["report"],
+            "chart_config": result["chart_config"],
+            "raw_data": result["raw_data"],
+            "sql_query": result["sql_query"],
+            "execution_time": exec_time,
+            "done": True,
+        }}
+
+        # Estimate usage
+        out_tokens = count_tokens(result["report"]) + count_tokens(str(result.get("chart_config", "")))
+        raw_data_str = str(tool_state.get("last_raw_data", ""))
+        in_tokens = budget["total_used"] + count_tokens(raw_data_str)
+        cost = (in_tokens / 1_000_000 * model_config.cost_per_1m_input) + (out_tokens / 1_000_000 * model_config.cost_per_1m_output)
+
+        yield {"event": "usage", "data": {
+            "input_tokens": in_tokens,
+            "output_tokens": out_tokens,
+            "estimated_cost": round(cost, 4)
+        }}
 
         # ── Final Log ──────────────────────────────────────────────────
         logger.info("Request completed", extra={"data": {
@@ -181,7 +200,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             "error": str(e),
             "elapsed_ms": ctx.elapsed_ms(),
         }})
-        yield f"data: {json.dumps({'status': f'Error: {str(e)}'})}\n\n"
+        yield {"event": "error", "data": {"message": f"Error: {str(e)}"}}
 
     finally:
-        restore_api_key(env_var_name, original_key)
+        pass

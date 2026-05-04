@@ -22,5 +22,5 @@ from analytics.api import api
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("api/", api.urls),
+    path("api/v1/", api.urls),
 ]

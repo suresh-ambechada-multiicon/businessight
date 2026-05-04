@@ -7,6 +7,7 @@ semicolons, CTEs with side effects, and MSSQL-specific exploits.
 """
 
 import re
+import sqlparse
 
 from analytics.services.logger import get_logger
 
@@ -48,6 +49,25 @@ def validate_sql(query: str, ctx=None) -> tuple[bool, str]:
         logger.warning("SQL blocked: not a SELECT", extra={"data": log_data})
         return False, "Only SELECT queries are allowed."
 
+    # Layer 2: Parse AST — reject any non-SELECT statement
+    try:
+        parsed = sqlparse.parse(stripped)
+        for statement in parsed:
+            stmt_type = statement.get_type()
+            # sqlparse sometimes returns 'UNKNOWN' for complex CTEs but we still want to rely on the regex fallback
+            if stmt_type != "SELECT" and stmt_type != "UNKNOWN":
+                log_data = {
+                    "query_preview": stripped[:200],
+                    "blocked_statement": stmt_type,
+                }
+                if ctx:
+                    log_data.update(ctx.to_dict())
+                logger.warning("SQL blocked: non-SELECT statement detected via AST", extra={"data": log_data})
+                return False, f"Blocked: {stmt_type} statement detected."
+    except Exception as e:
+        logger.warning("SQL AST parsing failed", extra={"data": {"error": str(e)}})
+
+    # Layer 3: Keep existing regex as extra safety net
     for pattern in _compiled_patterns:
         if pattern.search(stripped):
             log_data = {

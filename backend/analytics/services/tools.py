@@ -19,11 +19,7 @@ from analytics.services.security import validate_sql
 logger = get_logger("tools")
 
 
-# Maximum rows returned to the AI to prevent context token explosion
-MAX_ROWS_FOR_AI = 500
-
-
-def create_tools(db, usable_tables: list[str], ctx=None):
+def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     """
     Factory that creates the three analytics tools bound to a specific
     database connection and table list.
@@ -37,6 +33,15 @@ def create_tools(db, usable_tables: list[str], ctx=None):
         "last_raw_data": None,
         "all_sql_queries": [],  # List of dicts: {"query": str, "time": float}
     }
+
+    # Dynamic row limit calculation based on budget
+    max_rows = 1000
+    if token_budget:
+        available = token_budget.get("available_for_tools", 100000)
+        # Assume ~150 tokens per row for an average table (10 columns * 15 tokens)
+        tokens_per_row = 150
+        usable_budget = int(available * 0.7)  # reserve 30% for reasoning
+        max_rows = max(20, min(1000, usable_budget // tokens_per_row))
 
     # Log context helper
     _ctx = ctx.to_dict() if ctx else {}
@@ -90,9 +95,9 @@ def create_tools(db, usable_tables: list[str], ctx=None):
                 result = connection.execute(text(query))
                 keys = result.keys()
 
-                fetched = result.fetchmany(MAX_ROWS_FOR_AI + 1)
-                has_more = len(fetched) > MAX_ROWS_FOR_AI
-                to_process = fetched[:MAX_ROWS_FOR_AI]
+                fetched = result.fetchmany(max_rows + 1)
+                has_more = len(fetched) > max_rows
+                to_process = fetched[:max_rows]
 
                 rows = []
                 for row in to_process:
@@ -119,11 +124,11 @@ def create_tools(db, usable_tables: list[str], ctx=None):
                 "query_index": len(tool_state["all_sql_queries"]),
             }})
 
-            output_str = json.dumps(rows)
+            output_str = f"Query returned {len(rows)} rows.\n" + json.dumps(rows)
             if has_more:
                 output_str += (
                     f"\n\nWARNING: The query returned too many rows. Output has been "
-                    f"truncated to the first {MAX_ROWS_FOR_AI} rows to prevent memory "
+                    f"truncated to the first {max_rows} rows to prevent memory "
                     f"overflow. If you need total counts or aggregated data, you MUST "
                     f"rewrite your SQL query using COUNT(), SUM(), or GROUP BY instead "
                     f"of SELECT *."

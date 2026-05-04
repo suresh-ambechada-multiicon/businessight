@@ -108,11 +108,14 @@ export const useAppLogic = () => {
         api_key: apiKey,
         db_url: dbUrl,
         session_id: currentSessionId,
-      }, controller.signal);
+      });
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const taskId = response.task_id;
+      const streamResponse = await api.streamResults(taskId, controller.signal);
 
-      const reader = response.body?.getReader();
+      if (!streamResponse.ok) throw new Error(`HTTP error! status: ${streamResponse.status}`);
+
+      const reader = streamResponse.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
 
@@ -130,21 +133,42 @@ export const useAppLogic = () => {
             if (!trimmedLine || !trimmedLine.startsWith("data: ")) continue;
 
             try {
-              const data = JSON.parse(trimmedLine.slice(6));
+              const payload = JSON.parse(trimmedLine.slice(6));
+              const eventType = payload.event;
+              const eventData = payload.data || {};
+
               setInteractions((prev) =>
                 prev.map((i) => {
                   if (i.id !== newInteractionId) return i;
                   const updatedInteraction = { ...i };
-                  if (data.status) updatedInteraction.status = data.status;
-                  if (data.report !== undefined || data.done) {
+                  
+                  if (eventType === "status") {
+                    updatedInteraction.status = eventData.message;
+                  } else if (eventType === "tool") {
+                    if (eventData.name === "execute_read_only_sql") {
+                       updatedInteraction.status = `SQL: ${eventData.args?.query || ""}`;
+                    } else {
+                       updatedInteraction.status = `Tool: ${eventData.name}`;
+                    }
+                  } else if (eventType === "report" || eventType === "result") {
                     const prevReport = updatedInteraction.result?.report || "";
-                    const newReport = data.report || "";
+                    const newReport = eventData.report || eventData.content || "";
+                    const isDone = eventType === "result";
+                    
                     updatedInteraction.result = { 
                       ...(updatedInteraction.result || {}), 
-                      ...data,
-                      report: (data.done && !newReport) ? prevReport : (newReport || prevReport)
+                      ...eventData,
+                      report: (isDone && !newReport) ? prevReport : (newReport || prevReport)
                     };
+                  } else if (eventType === "error") {
+                    updatedInteraction.status = `Error: ${eventData.message}`;
+                    if (!updatedInteraction.result) {
+                        updatedInteraction.result = { report: eventData.message } as any;
+                    }
+                  } else if (eventType === "usage") {
+                    updatedInteraction.usage = eventData;
                   }
+                  
                   return updatedInteraction;
                 })
               );

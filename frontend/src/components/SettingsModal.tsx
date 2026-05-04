@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { X } from "lucide-react";
+import { api } from "../api/api";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -26,6 +27,20 @@ export function SettingsModal({
   const [tempApiKey, setTempApiKey] = useState(apiKey);
   const [tempDbUrl, setTempDbUrl] = useState(dbUrl);
   const [isCustom, setIsCustom] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{ id: string, name: string, provider: string }[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
+
+  useEffect(() => {
+    if (isOpen) {
+      api.fetchModels().then(data => {
+        setAvailableModels(data);
+        setIsLoadingModels(false);
+      }).catch(err => {
+        console.error("Failed to load models:", err);
+        setIsLoadingModels(false);
+      });
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -36,25 +51,7 @@ export function SettingsModal({
     onClose();
   };
 
-  const predefinedModels = [
-    "openai:gpt-4o",
-    "openai:gpt-4o-mini",
-    "openai:o3-mini",
-    "anthropic:claude-3-7-sonnet-latest",
-    "anthropic:claude-3-5-sonnet-latest",
-    "anthropic:claude-3-5-haiku-latest",
-    "google_genai:gemini-3.1-pro-preview",
-    "google_genai:gemini-3-flash-preview",
-    "google_genai:gemini-3.1-flash-lite-preview",
-    "google_genai:gemini-3-deep-think",
-    "google_genai:gemini-2.5-pro",
-    "google_genai:gemini-2.5-flash",
-    "google_genai:gemini-2.5-flash-lite",
-  ];
-
-  // Determine what the select dropdown should show
-  const showCustomInput =
-    isCustom || (!predefinedModels.includes(tempModel) && tempModel !== "");
+  const showCustomInput = isCustom || (!isLoadingModels && !availableModels.some(m => m.id === tempModel) && tempModel !== "");
   const selectValue = showCustomInput ? "custom" : tempModel;
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -85,40 +82,18 @@ export function SettingsModal({
             value={selectValue}
             onChange={handleModelChange}
           >
-            <option value="openai:gpt-4o">OpenAI (GPT-4o)</option>
-            <option value="openai:gpt-4o-mini">OpenAI (GPT-4o Mini)</option>
-            <option value="openai:o3-mini">OpenAI (o3-mini)</option>
-            <option value="anthropic:claude-3-7-sonnet-latest">
-              Anthropic (Claude 3.7 Sonnet)
-            </option>
-            <option value="anthropic:claude-3-5-sonnet-latest">
-              Anthropic (Claude 3.5 Sonnet)
-            </option>
-            <option value="anthropic:claude-3-5-haiku-latest">
-              Anthropic (Claude 3.5 Haiku)
-            </option>
-            <option value="google_genai:gemini-3.1-pro-preview">
-              Google (Gemini 3.1 Pro)
-            </option>
-            <option value="google_genai:gemini-3-flash-preview">
-              Google (Gemini 3 Flash)
-            </option>
-            <option value="google_genai:gemini-3.1-flash-lite-preview">
-              Google (Gemini 3.1 Flash-Lite)
-            </option>
-            <option value="google_genai:gemini-3-deep-think">
-              Google (Gemini 3 Deep Think)
-            </option>
-            <option value="google_genai:gemini-2.5-pro">
-              Google (Gemini 2.5 Pro)
-            </option>
-            <option value="google_genai:gemini-2.5-flash">
-              Google (Gemini 2.5 Flash)
-            </option>
-            <option value="google_genai:gemini-2.5-flash-lite">
-              Google (Gemini 2.5 Flash Lite)
-            </option>
-            <option value="custom">Custom (Enter manually)</option>
+            {isLoadingModels ? (
+              <option value="">Loading models...</option>
+            ) : (
+              <>
+                {availableModels.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.provider === 'openai' ? 'OpenAI' : m.provider === 'anthropic' ? 'Anthropic' : 'Google'} ({m.name})
+                  </option>
+                ))}
+                <option value="custom">Custom (Enter manually)</option>
+              </>
+            )}
           </select>
 
           {showCustomInput && (

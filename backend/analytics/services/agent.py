@@ -95,43 +95,39 @@ def _detect_provider(model: str) -> str:
     return "openai"
 
 
-def init_llm(model: str, api_key: str, ctx=None):
+def init_llm(model: str, api_key: str, llm_config, ctx=None):
     """
-    Initialize the LLM and set the appropriate env var for the provider.
-    Returns (llm, env_var_name, original_key) for cleanup.
+    Initialize the LLM passing the API key and dynamic configs.
     """
     provider = _detect_provider(model)
-    env_key_map = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "google_genai": "GOOGLE_API_KEY",
-    }
-    env_var_name = env_key_map.get(provider)
-
-    original_key = None
-    if env_var_name:
-        original_key = os.environ.get(env_var_name)
-        os.environ[env_var_name] = api_key
 
     _ctx = ctx.to_dict() if ctx else {}
     logger.info("LLM initialized", extra={"data": {
         **_ctx,
         "provider": provider,
         "model": model,
-        "env_var": env_var_name,
     }})
 
-    llm = init_chat_model(model, temperature=0.1)
-    return llm, env_var_name, original_key
+    model_kwargs = {
+        "api_key": api_key,
+        "temperature": getattr(llm_config, "temperature", 0.1),
+    }
+    
+    max_tokens = getattr(llm_config, "max_tokens", None)
+    if max_tokens:
+        model_kwargs["max_tokens"] = max_tokens
+        
+    top_p = getattr(llm_config, "top_p", 1.0)
+    if top_p != 1.0:
+        model_kwargs["top_p"] = top_p
+    
+    if provider == "google_genai":
+        model_kwargs["google_api_key"] = api_key
+    elif provider == "anthropic":
+        model_kwargs["anthropic_api_key"] = api_key
 
-
-def restore_api_key(env_var_name, original_key):
-    """Restore the original API key after agent execution."""
-    if env_var_name:
-        if original_key is not None:
-            os.environ[env_var_name] = original_key
-        else:
-            os.environ.pop(env_var_name, None)
+    llm = init_chat_model(model, **model_kwargs)
+    return llm
 
 
 # ── Message History Builder ─────────────────────────────────────────────
@@ -195,7 +191,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
                     **_ctx,
                     "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
                 }})
-                yield f"data: {json.dumps({'status': 'Analysis cancelled by user. Stopping backend...'})}\n\n"
+                yield {"event": "status", "data": {"message": "Analysis cancelled by user. Stopping backend..."}}
                 cache.delete(f"cancel_{session_id}")
                 break
 
@@ -213,7 +209,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
                                 last_non_empty_report = partial_args['report']
                                 if last_non_empty_report != last_yielded_report:
                                     last_yielded_report = last_non_empty_report
-                                    yield f"data: {json.dumps({'report': last_yielded_report})}\n\n"
+                                    yield {"event": "report", "data": {"content": last_yielded_report, "partial": True}}
                         except Exception:
                             pass
 
@@ -226,7 +222,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
                                 last_non_empty_report = last_tool_args['report']
                                 if last_non_empty_report != last_yielded_report:
                                     last_yielded_report = last_non_empty_report
-                                    yield f"data: {json.dumps({'report': last_yielded_report})}\n\n"
+                                    yield {"event": "report", "data": {"content": last_yielded_report, "partial": True}}
 
                 try:
                     if full_content:
@@ -235,7 +231,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
                             last_non_empty_report = partial_data["report"]
                             if last_non_empty_report != last_yielded_report:
                                 last_yielded_report = last_non_empty_report
-                                yield f"data: {json.dumps({'report': last_yielded_report})}\n\n"
+                                yield {"event": "report", "data": {"content": last_yielded_report, "partial": True}}
                 except Exception:
                     pass
 
@@ -244,10 +240,10 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
                 for tc in msg.tool_calls:
                     if tc['name'] == 'execute_read_only_sql':
                         sql = tc['args'].get('query', '')
-                        yield f"data: {json.dumps({'status': f'SQL: {sql}'})}\n\n"
+                        yield {"event": "tool", "data": {"name": tc['name'], "args": {"query": sql}}}
                     elif tc['name'] not in ['AnalyticsResponse', 'structured_response']:
                         tool_name = tc['name']
-                        yield f"data: {json.dumps({'status': f'Tool: {tool_name}'})}\n\n"
+                        yield {"event": "tool", "data": {"name": tool_name}}
 
     except GeneratorExit:
         logger.info("Stream generator closed (client disconnect)", extra={"data": {
@@ -261,7 +257,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
             "error": str(e),
             "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
         }})
-        yield f"data: {json.dumps({'status': f'Error in AI execution: {str(e)}'})}\n\n"
+        yield {"event": "error", "data": {"message": f"Error in AI execution: {str(e)}"}}
 
     stream_elapsed = round((time.time() - stream_start) * 1000, 2)
     logger.info("Stream completed", extra={"data": {
@@ -327,6 +323,19 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
         for i, q_info in enumerate(all_queries):
             combined_sql += f"-- Query {i+1} (Execution Time: {q_info['time']:.3f}s)\n{q_info['query']}\n\n"
 
+    # Enrich chart_config with axis labels if missing
+    if isinstance(ans, dict):
+        chart_config = ans.get("chart_config")
+        if chart_config and isinstance(chart_config, dict):
+            raw_data = ans.get("raw_data") or recovered_raw_data or []
+            if raw_data and not chart_config.get("x_label"):
+                keys = [k for k in raw_data[0].keys() if k != "id"]
+                chart_config["x_label"] = keys[0].replace("_", " ").title() if keys else "Items"
+            if raw_data and not chart_config.get("y_label"):
+                datasets = chart_config.get("data", {}).get("datasets", [])
+                chart_config["y_label"] = datasets[0].get("label") if datasets else "Value"
+            ans["chart_config"] = chart_config
+
     # Extract fields
     if isinstance(ans, dict):
         report = ans.get("report") or last_non_empty_report or ""
@@ -372,10 +381,11 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
 
 # ── Auto Chart Generation ──────────────────────────────────────────────
 
-def auto_generate_chart(chart_config, raw_data) -> dict | None:
+def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
     """
     Fallback chart generation when the AI doesn't produce one.
-    Only generates if the data has numeric columns and >1 row.
+    Only generates if the data has numeric columns and >5 rows,
+    UNLESS the user explicitly asked for a chart.
     """
     is_empty_chart = False
     if chart_config and isinstance(chart_config, dict):
@@ -383,7 +393,11 @@ def auto_generate_chart(chart_config, raw_data) -> dict | None:
         if not data_obj.get("labels") or not data_obj.get("datasets"):
             is_empty_chart = True
 
-    if (not chart_config or is_empty_chart) and raw_data and isinstance(raw_data, list) and len(raw_data) > 1:
+    # Check if user explicitly asked for a chart in the query
+    is_explicit_request = any(word in (query or "").lower() for word in ["chart", "graph", "plot", "visualize"])
+    threshold = 1 if is_explicit_request else 5
+
+    if (not chart_config or is_empty_chart) and raw_data and isinstance(raw_data, list) and len(raw_data) >= threshold:
         try:
             keys = [k for k in raw_data[0].keys() if k != "id"]
             label_key = keys[0]
@@ -392,15 +406,26 @@ def auto_generate_chart(chart_config, raw_data) -> dict | None:
             if value_keys:
                 labels = [str(row.get(label_key, "")) for row in raw_data]
                 datasets = []
+                datasets = []
                 for vk in value_keys[:5]:
                     data_points = [float(row.get(vk, 0)) for row in raw_data]
-                    datasets.append({"label": vk.replace("_", " ").title(), "data": data_points[:30]})
+                    # Check for variance: don't chart if all values are the same (e.g. all 1s or all 0s)
+                    if len(set(data_points)) > 1:
+                        datasets.append({"label": vk.replace("_", " ").title(), "data": data_points[:30]})
+
+                if not datasets:
+                    return None
 
                 chart_type = (
                     "line" if any(k.lower() in label_key.lower() for k in ["date", "time", "month", "year"])
                     else "bar"
                 )
-                chart_config = {"type": chart_type, "data": {"labels": labels[:30], "datasets": datasets}}
+                chart_config = {
+                    "type": chart_type, 
+                    "x_label": label_key.replace("_", " ").title(),
+                    "y_label": value_keys[0].replace("_", " ").title() if len(value_keys) == 1 else "Value",
+                    "data": {"labels": labels[:30], "datasets": datasets}
+                }
 
                 logger.info("Auto-generated chart", extra={"data": {
                     "chart_type": chart_type,
