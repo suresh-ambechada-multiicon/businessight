@@ -7,14 +7,23 @@ import { useAppLogic } from "./hooks/useAppLogic";
 import "./App.css";
 
 function App() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    return (localStorage.getItem("theme") as "light" | "dark") || "light";
+  const [theme, setTheme] = useState<"light" | "dark" | "system">(() => {
+    return (
+      (localStorage.getItem("theme") as "light" | "dark" | "system") || "light"
+    );
   });
+  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">(
+    "light",
+  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Settings State
-  const [model, setModel] = useState(() => localStorage.getItem("model") || "openai:gpt-4o");
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("apiKey") || "");
+  const [model, setModel] = useState(
+    () => localStorage.getItem("model") || "openai:gpt-4o",
+  );
+  const [apiKey, setApiKey] = useState(
+    () => localStorage.getItem("apiKey") || "",
+  );
   const [dbUrl, setDbUrl] = useState(() => localStorage.getItem("dbUrl") || "");
 
   const {
@@ -25,13 +34,30 @@ function App() {
     handleNewChat,
     handleDeleteSession,
     handleStop,
-    handleQuery
+    handleQuery,
   } = useAppLogic();
 
   // Theme effect
   useEffect(() => {
     localStorage.setItem("theme", theme);
-    document.body.classList.toggle("dark", theme === "dark");
+
+    const applyTheme = () => {
+      let isDark = theme === "dark";
+      if (theme === "system") {
+        isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+      setEffectiveTheme(isDark ? "dark" : "light");
+      document.body.classList.toggle("dark", isDark);
+    };
+
+    applyTheme();
+
+    if (theme === "system") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleChange = () => applyTheme();
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
   }, [theme]);
 
   // Sync settings to localStorage
@@ -41,7 +67,13 @@ function App() {
     localStorage.setItem("dbUrl", dbUrl);
   }, [model, apiKey, dbUrl]);
 
-  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+  const toggleTheme = () => {
+    setTheme((t) => {
+      if (t === "light") return "dark";
+      if (t === "dark") return "system";
+      return "light";
+    });
+  };
 
   const sessions = useMemo(() => {
     const sessionMap = new Map<string, string>();
@@ -52,16 +84,22 @@ function App() {
       }
     });
 
-    const list = Array.from(sessionMap.entries()).map(([id, title]) => ({ id, title })).reverse();
+    const list = Array.from(sessionMap.entries())
+      .map(([id, title]) => ({ id, title }))
+      .reverse();
     if (!list.find((s) => s.id === currentSessionId)) {
       list.unshift({ id: currentSessionId, title: "New Chat..." });
     }
     return list;
   }, [interactions, currentSessionId]);
 
-  const currentInteractions = useMemo(() => 
-    interactions.filter((i) => ((i as any).session_id || "default") === currentSessionId),
-  [interactions, currentSessionId]);
+  const currentInteractions = useMemo(
+    () =>
+      interactions.filter(
+        (i) => ((i as any).session_id || "default") === currentSessionId,
+      ),
+    [interactions, currentSessionId],
+  );
 
   return (
     <div className="app-container">
@@ -81,7 +119,7 @@ function App() {
         onStop={handleStop}
         isLoading={isLoading}
         interactions={currentInteractions}
-        theme={theme}
+        theme={effectiveTheme}
       />
 
       <RightSidebar interactions={currentInteractions} />

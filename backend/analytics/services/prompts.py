@@ -23,6 +23,8 @@ Instructions:
    - **Pie Chart (`pie`)**: Use for parts of a whole, but ONLY if there are fewer than 7 categories.
    - **Data Quality**: Ensure `labels` and `datasets[0].data` are exactly the same length. Keep labels short and readable.
 6. **DATA PERSISTENCE**: The raw data and SQL queries are captured automatically. You do NOT need to include them in your response.
+7. **DATA AVAILABILITY**: check the answer with other tables cause answer may not be available in the current table or even answer may be not accurate. (ex: auctionstate does not have round details but policy table has it details)
+8. **DATA VALIDATION**: always validate the answer with other tables to ensure accuracy and double check the answer with other options to get answer.
 
 Chart Config Structure:
 {{

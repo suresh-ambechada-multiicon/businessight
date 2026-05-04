@@ -1,4 +1,12 @@
-import { Sun, Moon, Database, Settings, PlusCircle, Trash2 } from "lucide-react";
+import {
+  Sun,
+  Moon,
+  Monitor,
+  Database,
+  Settings,
+  PlusCircle,
+  Trash2,
+} from "lucide-react";
 
 interface Session {
   id: string;
@@ -6,7 +14,7 @@ interface Session {
 }
 
 interface SidebarProps {
-  theme: "light" | "dark";
+  theme: "light" | "dark" | "system";
   toggleTheme: () => void;
   openSettings: () => void;
   sessions: Session[];
@@ -51,15 +59,26 @@ export function Sidebar({
                 key={session.id}
                 className={`history-item ${session.id === currentSessionId ? "active" : ""}`}
               >
-                <span className="history-item-text" onClick={() => onSelectSession(session.id)} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.title}</span>
-                <Trash2 
-                  size={14} 
+                <span
+                  className="history-item-text"
+                  onClick={() => onSelectSession(session.id)}
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {session.title}
+                </span>
+                <Trash2
+                  size={14}
                   className="delete-btn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm("Delete this chat?")) onDeleteSession(session.id);
+                    if (confirm("Delete this chat?"))
+                      onDeleteSession(session.id);
                   }}
-                  style={{ opacity: 0.4, transition: 'opacity 0.2s' }}
+                  style={{ opacity: 0.4, transition: "opacity 0.2s" }}
                 />
               </button>
             ))
@@ -69,8 +88,17 @@ export function Sidebar({
 
       <div className="sidebar-footer">
         <button className="action-btn" onClick={toggleTheme}>
-          {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
-          <span>{theme === "light" ? "Dark Mode" : "Light Mode"}</span>
+          {theme === "light" ? (
+            <Sun size={18} />
+          ) : theme === "dark" ? (
+            <Moon size={18} />
+          ) : (
+            <Monitor size={18} />
+          )}
+          <span>
+            Theme:{" "}
+            {theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System"}
+          </span>
         </button>
 
         <button className="action-btn" onClick={openSettings}>
