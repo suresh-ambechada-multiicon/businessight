@@ -48,10 +48,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            height: "100%",
+            flex: 1,
             opacity: 0.5,
             textAlign: "center",
             fontSize: "0.875rem",
+            padding: "20px"
           }}
         >
           No reports generated yet.
@@ -67,36 +68,40 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
         Report Outline
       </div>
       <div className="sidebar-content">
-        {reports.map((report: any, idx) => (
-          <div
-            key={report.id}
-            className="history-item"
-            style={{
-              flexDirection: "column",
-              alignItems: "flex-start",
-              padding: "6px",
-              height: "auto",
-              whiteSpace: "normal",
-              cursor: "pointer",
-              overflow: "visible",
-            }}
-            onClick={() => scrollToInteraction(report.elementId)}
-          >
+        <div className="chat-list">
+          {reports.map((report: any, idx) => (
             <div
-              className="history-item-text"
+              key={report.id}
+              className="history-item"
               style={{
-                fontWeight: 600,
-                width: "100%",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                padding: "8px 12px",
+                height: "auto",
                 whiteSpace: "normal",
+                cursor: "pointer",
                 overflow: "visible",
-                textOverflow: "clip",
-                lineHeight: "1.4",
+                gap: "4px"
               }}
+              onClick={() => scrollToInteraction(report.elementId)}
             >
-              {idx + 1}. {report.title}
+              <div
+                className="history-item-text"
+                style={{
+                  fontWeight: 600,
+                  width: "100%",
+                  whiteSpace: "normal",
+                  overflow: "visible",
+                  textOverflow: "clip",
+                  lineHeight: "1.4",
+                  fontSize: "0.85rem"
+                }}
+              >
+                {idx + 1}. {report.title}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

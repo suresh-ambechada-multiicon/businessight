@@ -162,6 +162,7 @@ export const useAppLogic = () => {
                     };
                   } else if (eventType === "error") {
                     updatedInteraction.status = `Error: ${eventData.message}`;
+                    setIsLoading(false);
                     if (!updatedInteraction.result) {
                         updatedInteraction.result = { report: eventData.message } as any;
                     }

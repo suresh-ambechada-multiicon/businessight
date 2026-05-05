@@ -21,7 +21,7 @@ _engine_pool: dict[str, any] = {}
 _engine_lock = threading.Lock()
 
 # Cache TTL for schema discovery
-SCHEMA_CACHE_TTL = 300  # 5 minutes
+SCHEMA_CACHE_TTL = 3600  # 1 hour
 
 
 def get_db_uri_hash(db_uri: str) -> str:
@@ -54,9 +54,45 @@ def set_cached_tables(db_uri_hash: str, tables: list[str]):
     }})
 
 
+def get_cached_schema(db_uri_hash: str) -> str | None:
+    """Retrieve the detected active schema name from cache."""
+    return cache.get(f"schema:active:{db_uri_hash}")
+
+
+def set_cached_schema(db_uri_hash: str, schema_name: str):
+    """Store the detected active schema name in cache."""
+    cache.set(f"schema:active:{db_uri_hash}", schema_name, timeout=SCHEMA_CACHE_TTL)
+
+
+def get_cached_schema_context(db_uri_hash: str) -> str | None:
+    """Retrieve the full schema context string from cache."""
+    return cache.get(f"schema:context:{db_uri_hash}")
+
+
+def set_cached_schema_context(db_uri_hash: str, context: str):
+    """Store the full schema context string in cache."""
+    cache.set(f"schema:context:{db_uri_hash}", context, timeout=SCHEMA_CACHE_TTL)
+    logger.info("Schema context cached", extra={"data": {
+        "db_uri_hash": db_uri_hash,
+        "context_length": len(context),
+    }})
+
+
+def get_cached_column_info(db_uri_hash: str, table_name: str) -> str | None:
+    """Retrieve cached column info for a specific table."""
+    return cache.get(f"schema:cols:{db_uri_hash}:{table_name}")
+
+
+def set_cached_column_info(db_uri_hash: str, table_name: str, info: str):
+    """Store column info for a specific table."""
+    cache.set(f"schema:cols:{db_uri_hash}:{table_name}", info, timeout=SCHEMA_CACHE_TTL)
+
+
 def invalidate_schema_cache(db_uri_hash: str):
     """Force-clear the schema cache for a specific database."""
     cache.delete(f"schema:tables:{db_uri_hash}")
+    cache.delete(f"schema:active:{db_uri_hash}")
+    cache.delete(f"schema:context:{db_uri_hash}")
     logger.info("Schema cache invalidated", extra={"data": {"db_uri_hash": db_uri_hash}})
 
 

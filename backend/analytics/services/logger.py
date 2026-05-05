@@ -36,6 +36,7 @@ class RequestContext:
     model: str = ""
     query: str = ""
     db_uri_hash: str = ""  # Hashed for security — never log raw URI
+    task_id: str = ""      # Celery task ID — used for status channel
     start_time: float = field(default_factory=time.time)
 
     def elapsed_ms(self) -> float:

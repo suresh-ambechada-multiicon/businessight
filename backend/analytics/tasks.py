@@ -18,6 +18,7 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
         model=payload.model,
         query=payload.query,
         db_uri_hash=get_db_uri_hash(payload.db_url) if payload.db_url else "",
+        task_id=self.request.id,  # Pass Celery task ID for status channel
     )
     
     redis_client = redis.from_url(settings.CELERY_BROKER_URL)

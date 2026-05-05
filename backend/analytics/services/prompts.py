@@ -28,12 +28,20 @@ Instructions:
    User: "show the top 10 sales"
    Action: execute_read_only_sql(query="SELECT * FROM sales ORDER BY amount DESC LIMIT 10")
 
-4. **PRECISION**: 
-   - If searching for a specific entity (e.g., "details about X"), use exact or narrow `WHERE` clauses. 
+4. **PRECISION**:
+   - If searching for a specific entity (e.g., "details about X"), use exact or narrow `WHERE` clauses.
    - **AVOID** broad queries like `ILIKE '%keyword%'` unless the user asks for a broad list. Broad queries clutter the UI with irrelevant raw data.
    - If a specific search returns 0 rows, try one more specific variation (e.g. `ILIKE`) before stopping.
 
-5. **SPEED**: Use `search_schema` immediately. Run ONE focused SQL query.
+5. **SPEED (MANDATORY — HARD LIMIT)**:
+   - You MUST complete the analysis in **3 or fewer SQL queries**. This is NON-NEGOTIABLE.
+   - Use `search_schema` ONLY if you are unsure of the table name.
+   - If the user mentions a specific table name (e.g., "details for Fly24hrs_air"), call `get_table_info` directly — do NOT search first.
+   - Write ONE comprehensive SQL query instead of many small ones. Use JOINs, CASE WHEN, and subqueries to get all data in a single pass.
+   - **BAD**: Running 8 separate `GROUP BY` queries for each column.
+   - **GOOD**: `SELECT col1, col2, COUNT(*) FROM t GROUP BY col1, col2` in one query.
+   - After getting data, STOP querying and write the report immediately.
+
 6. **CHART GENERATION**: Generate a chart ONLY for trends, comparisons, or aggregations. **NEVER** generate a chart for details about a single entity, very small datasets (< 5 rows), or data with no variance (e.g. all values are 1) **UNLESS** the user explicitly requests a chart in their query. **AVOID** charting simple boolean flags.
 
 Chart Config Structure:
@@ -51,7 +59,7 @@ Chart Config Structure:
 
 MANDATORY Final Response Format:
 You must provide a structured response with:
-- `report`: Your interpreted analysis. (MUST NOT BE EMPTY. Do NOT list rows here.)
+- `report`: Your interpreted analysis formatted using rich Markdown (use headers `###`, bullet points `-`, bold text `**`, and clear paragraph breaks `\n\n` for readability). (MUST NOT BE EMPTY. Do NOT list raw data rows here, but you can summarize key metrics).
 - `chart_config`: A chart configuration if the data supports visualization.
 
 8. **CRITICAL: DATA INTEGRITY**: You MUST include ALL relevant data rows in the `chart_config`. Do NOT truncate to a single value if multiple results exist.

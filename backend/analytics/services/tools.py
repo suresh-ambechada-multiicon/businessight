@@ -15,6 +15,7 @@ from sqlalchemy import inspect, text
 
 from analytics.services.logger import get_logger
 from analytics.services.security import validate_sql
+from analytics.services.status import send_status
 
 logger = get_logger("tools")
 
@@ -45,17 +46,60 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
 
     # Log context helper
     _ctx = ctx.to_dict() if ctx else {}
+    _task_id = ctx.task_id if ctx else ""
+    _db_uri_hash = ctx.db_uri_hash if ctx else ""
+
+    def _status(msg: str):
+        send_status(_task_id, msg)
 
     def _get_table_schema(table_names: str) -> str:
-        """Internal helper to fetch column info for one or more tables."""
+        """Internal helper to fetch column info for one or more tables. Uses per-table cache."""
+        from analytics.services.cache import get_cached_column_info, set_cached_column_info
+        
         try:
             tables = [t.strip() for t in table_names.split(",") if t.strip()]
-            db_inspector = inspect(db._engine)
             output = []
+            
             for t in tables:
-                columns = db_inspector.get_columns(t, schema=db._schema)
-                cols_str = ", ".join([f"{c['name']} {str(c['type'])}" for c in columns])
-                output.append(f"Table '{t}' columns: {cols_str}")
+                # Check per-table cache first
+                if _db_uri_hash:
+                    cached = get_cached_column_info(_db_uri_hash, t)
+                    if cached is not None:
+                        output.append(cached)
+                        continue
+
+                # Try fast MSSQL path
+                col_str = ""
+                try:
+                    if "mssql" in db.engine.url.drivername:
+                        with db.engine.connect() as conn:
+                            full_table_name = f"{db._schema}.{t}" if db._schema else t
+                            query = f"""
+                                SELECT c.name, tp.name as type 
+                                FROM sys.columns c 
+                                JOIN sys.types tp ON c.user_type_id = tp.user_type_id 
+                                WHERE c.object_id = OBJECT_ID('{full_table_name}')
+                            """
+                            result = conn.execute(text(query))
+                            cols = [f"{row[0]} {row[1]}" for row in result]
+                            if cols:
+                                col_str = f"Table '{t}' columns: {', '.join(cols)}"
+                except Exception:
+                    pass
+                
+                # Fallback to SQLAlchemy inspector
+                if not col_str:
+                    db_inspector = inspect(db._engine)
+                    columns = db_inspector.get_columns(t, schema=db._schema)
+                    cols_str = ", ".join([f"{c['name']} {str(c['type'])}" for c in columns])
+                    col_str = f"Table '{t}' columns: {cols_str}"
+                
+                # Cache per-table result
+                if _db_uri_hash and col_str:
+                    set_cached_column_info(_db_uri_hash, t, col_str)
+
+                output.append(col_str)
+            
             return "\n".join(output) if output else "No tables found."
         except Exception as e:
             logger.error("Schema inspection failed", extra={"data": {
@@ -70,20 +114,23 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         Use this tool to fetch data to answer the user's analytical questions.
         IMPORTANT: This returns a JSON string array of dicts representing the rows.
         """
+        # Note: stream_agent already emits a 'tool' event with the query text.
+        # Don't send a status here — it would overwrite the SQL display in the UI.
         # Security validation
         is_safe, reason = validate_sql(query, ctx)
         if not is_safe:
             return json.dumps({"error": reason})
 
         try:
-            if query.strip() == tool_state.get("last_sql_query", "").strip():
-                logger.warning("Duplicate SQL blocked", extra={"data": {
+            # Prevent infinite loops (e.g. alternating Query A, Query B, Query A...)
+            past_queries = [q["query"].strip() for q in tool_state.get("all_sql_queries", [])]
+            if query.strip() in past_queries:
+                logger.warning("Duplicate SQL loop blocked", extra={"data": {
                     **_ctx, "query_preview": query[:200],
                 }})
                 return json.dumps({
-                    "error": "You just ran this exact query. "
-                             "It is either returning the same result or failing. "
-                             "Please try a different approach or stop."
+                    "error": "You have already executed this exact query earlier in this session. "
+                             "You are stuck in a loop. You MUST STOP querying now and write your final report using the data you already have."
                 })
 
             tool_state["last_sql_query"] = query
@@ -133,6 +180,8 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                     f"rewrite your SQL query using COUNT(), SUM(), or GROUP BY instead "
                     f"of SELECT *."
                 )
+            # Note: Deliberately NOT sending a status update here so the frontend
+            # keeps displaying the SQL query bubble instead of overwriting it with row counts.
             return output_str
         except Exception as e:
             logger.error("SQL execution failed", extra={"data": {
@@ -148,6 +197,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         Get the schema for the specified tables.
         Pass a comma-separated list of table names, e.g., 'users, orders'.
         """
+        _status(f"Inspecting table: {table_names}...")
         start = time.time()
         result = _get_table_schema(table_names)
         elapsed = round((time.time() - start) * 1000, 2)
@@ -157,6 +207,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
             "tables": table_names,
             "time_ms": elapsed,
         }})
+        _status("Table inspection complete")
         return result
 
     @tool
@@ -165,6 +216,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         Search for tables matching a keyword (e.g., 'sales', 'price', 'user').
         Use this tool when there are many tables and you don't know which one contains the data.
         """
+        _status(f"Searching for '{keyword}'...")
         start = time.time()
         keyword = keyword.strip().lower().replace("'", "").replace("%", "")
         if not keyword:
@@ -179,6 +231,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                 "matches": 0,
                 "time_ms": round((time.time() - start) * 1000, 2),
             }})
+            _status(f"No tables found matching '{keyword}'")
             return (
                 f"No tables found matching '{keyword}'. "
                 f"Try a different keyword (e.g., 'booking', 'master', 'customer')."
@@ -200,6 +253,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
             "time_ms": elapsed,
         }})
 
+        _status(f"Found {len(matching_tables)} relevant tables")
         return result
 
     tools = [execute_read_only_sql, get_table_info, search_schema]

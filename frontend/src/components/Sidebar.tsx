@@ -48,7 +48,7 @@ export function Sidebar({
         </button>
 
         <h3 className="sidebar-title">Recent Chats</h3>
-        <div style={{ display: "flex", flexDirection: "column" }}>
+        <div className="chat-list">
           {sessions.length === 0 ? (
             <div className="history-item" style={{ cursor: "default" }}>
               No chats yet
