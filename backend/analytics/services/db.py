@@ -8,7 +8,7 @@ and Redis-cached table discovery.
 
 import os
 import time
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlunparse
 
 from django.conf import settings
 from langchain_community.utilities import SQLDatabase
@@ -39,6 +39,16 @@ def normalize_db_uri(db_uri: str) -> str:
             "DATABASE_URL", f"sqlite:///{settings.BASE_DIR}/db.sqlite3"
         )
 
+    # Fix unquoted special characters in password (like @)
+    if "://" in db_uri:
+        scheme, rest = db_uri.split("://", 1)
+        if "@" in rest:
+            credentials, host_path = rest.rsplit("@", 1)
+            if ":" in credentials:
+                user, password = credentials.split(":", 1)
+                password = quote(unquote(password), safe="")
+                db_uri = f"{scheme}://{user}:{password}@{host_path}"
+
     # PostgreSQL — ensure psycopg2 driver
     if db_uri.startswith("postgres://"):
         db_uri = db_uri.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -65,7 +75,10 @@ def normalize_db_uri(db_uri: str) -> str:
         if parsed.query:
             qs = parse_qs(parsed.query)
             keys_to_remove = [
-                k for k in qs if k.lower() in ("encrypt", "trustservercertificate")
+                k
+                for k in qs
+                if k.lower()
+                in ("encrypt", "trustservercertificate", "multipleactiveresultsets")
             ]
             for k in keys_to_remove:
                 qs.pop(k, None)
@@ -90,17 +103,17 @@ def build_engine_args(db_uri: str) -> dict:
     if db_uri.startswith("mssql+pymssql://"):
         parsed = urlparse(db_uri)
         qs = parse_qs(parsed.query)
-        
+
         # pymssql expects these in connect_args, not URI
         encrypt = qs.get("encrypt", ["false"])[0].lower() == "true"
-        
+
         engine_args["connect_args"] = {
-            "timeout": 30,         # Query timeout
-            "login_timeout": 15,   # Connection timeout - fail fast!
+            "timeout": 30,  # Query timeout
+            "login_timeout": 15,  # Connection timeout - fail fast!
             "autocommit": True,
-            "tds_version": "7.4"
+            "tds_version": "7.4",
         }
-        
+
         if encrypt:
             # Note: pymssql's encryption support depends on FreeTDS configuration
             pass
@@ -129,9 +142,10 @@ def detect_active_schema(db_uri: str, engine_args: dict, ctx=None):
 
     # 2. Cache miss — inspect
     start_detect = time.time()
-    
+
     # Send status if we have a task ID
     from analytics.services.status import send_status
+
     task_id = ctx.task_id if ctx else ""
     send_status(task_id, "Connecting to database...")
 
@@ -252,11 +266,11 @@ def discover_tables(db, active_schema, ctx=None) -> list[str]:
                     query += f" AND SCHEMA_NAME(schema_id) = '{active_schema}'"
                 result = conn.execute(text(query))
                 all_tables = [row[0] for row in result]
-        
+
         if not all_tables:
             db_inspector = inspect(db._engine)
             all_tables = db_inspector.get_table_names(schema=active_schema)
-            
+
     except Exception as e:
         logger.warning(f"Fast table discovery failed, falling back: {str(e)}")
         db_inspector = inspect(db._engine)

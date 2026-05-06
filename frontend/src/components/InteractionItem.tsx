@@ -14,6 +14,8 @@ import {
   Clock,
   Download,
   Upload,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import {
@@ -46,6 +48,24 @@ export const InteractionItem = memo(
   }: InteractionItemProps) => {
     const result = interaction.result;
     const currentChartType = chartOverrides[idx] || result?.chart_config?.type;
+    const [isChartFullscreen, setIsChartFullscreen] = useState(false);
+
+    // Handle Escape key to close fullscreen chart
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "Escape" && isChartFullscreen) {
+          setIsChartFullscreen(false);
+        }
+      };
+
+      if (isChartFullscreen) {
+        window.addEventListener("keydown", handleKeyDown);
+      }
+
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }, [isChartFullscreen]);
 
     return (
       <div
@@ -243,7 +263,7 @@ export const InteractionItem = memo(
               ) : null}
 
               {result.chart_config && (
-                <div className="chart-wrapper-premium">
+                <div className={`chart-wrapper-premium ${isChartFullscreen ? 'fullscreen' : ''}`}>
                   <div className="chart-toolbar">
                     {[
                       {
@@ -311,6 +331,14 @@ export const InteractionItem = memo(
                         {btn.icon}
                       </button>
                     ))}
+                    <div style={{ width: '1px', background: 'var(--border-color)', margin: '4px 0' }} />
+                    <button
+                      className="chart-tool-btn"
+                      onClick={() => setIsChartFullscreen(!isChartFullscreen)}
+                      title={isChartFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                    >
+                      {isChartFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    </button>
                   </div>
                   <div className="chart-body">
                     <ChartDisplay

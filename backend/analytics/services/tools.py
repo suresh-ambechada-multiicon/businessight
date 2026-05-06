@@ -122,16 +122,17 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
             return json.dumps({"error": reason})
 
         try:
-            # Prevent infinite loops (e.g. alternating Query A, Query B, Query A...)
-            past_queries = [q["query"].strip() for q in tool_state.get("all_sql_queries", [])]
-            if query.strip() in past_queries:
-                logger.warning("Duplicate SQL loop blocked", extra={"data": {
+            # Prevent redundant execution and infinite loops
+            # If the exact same query is run again, return the previous result from cache
+            query_cache = tool_state.setdefault("query_cache", {})
+            normalized_query = query.strip().lower()
+            
+            if normalized_query in query_cache:
+                logger.info("SQL cache hit", extra={"data": {
                     **_ctx, "query_preview": query[:200],
                 }})
-                return json.dumps({
-                    "error": "You have already executed this exact query earlier in this session. "
-                             "You are stuck in a loop. You MUST STOP querying now and write your final report using the data you already have."
-                })
+                # Return the cached result so the AI can move on instead of looping
+                return query_cache[normalized_query]
 
             tool_state["last_sql_query"] = query
             tool_state["last_raw_data"] = None
@@ -180,6 +181,10 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                     f"rewrite your SQL query using COUNT(), SUM(), or GROUP BY instead "
                     f"of SELECT *."
                 )
+            
+            # Cache the successful result
+            query_cache[normalized_query] = output_str
+            
             # Note: Deliberately NOT sending a status update here so the frontend
             # keeps displaying the SQL query bubble instead of overwriting it with row counts.
             return output_str

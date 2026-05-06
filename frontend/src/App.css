@@ -214,7 +214,7 @@
 .chat-scroll-area {
     display: flex;
     flex-direction: column;
-    padding: var(--space-8) 0 var(--space-12) 0;
+    padding: var(--space-4) 0 var(--space-6) 0;
     max-width: 54rem;
     width: 100%;
     margin: 0 auto;
@@ -223,8 +223,8 @@
 .interaction-wrapper {
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
-    padding: var(--space-6) var(--space-4);
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-4);
 }
 
 .chat-message {
@@ -334,6 +334,29 @@
     border-radius: var(--radius-md);
     overflow: hidden;
     margin-top: var(--space-3);
+    background: var(--bg-primary);
+}
+
+.raw-data-table-wrapper.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+    margin: var(--space-6);
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+}
+
+.raw-data-table-wrapper.fullscreen details {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
 }
 
 .raw-data-summary {
@@ -362,6 +385,13 @@ details[open]>.raw-data-summary {
 .raw-data-scroll {
     max-height: 400px;
     overflow: auto;
+}
+
+.raw-data-table-wrapper.fullscreen .raw-data-scroll {
+    max-height: none;
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
 }
 
 .raw-data-table {
@@ -974,6 +1004,73 @@ details[open]>.raw-data-summary {
     margin-top: 16px;
     position: relative;
     width: 100%;
+}
+
+.chart-wrapper-premium.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    z-index: 9999;
+    margin: var(--space-6);
+    padding: var(--space-4);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+}
+
+.chart-wrapper-premium.fullscreen .chart-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.chart-wrapper-premium.fullscreen .chart-body>* {
+    width: 100%;
+}
+
+/* Recharts Professional Styling */
+.recharts-legend-item-text {
+    font-size: 11px !important;
+    color: var(--text-secondary) !important;
+    font-weight: 500;
+}
+
+.recharts-default-legend {
+    display: flex !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+}
+
+.recharts-tooltip-wrapper {
+    outline: none;
+}
+
+/* New Chart UI Classes */
+.chart-container-premium {
+    width: 100%;
+}
+
+.chart-axis-label {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    opacity: 0.6;
+}
+
+.chart-legend-wrapper {
+    padding-top: 30px;
+    max-height: 100px;
+    overflow-y: auto;
 }
 
 .chart-toolbar {

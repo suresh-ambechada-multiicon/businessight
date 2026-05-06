@@ -1,4 +1,3 @@
-
 ## 📂 Topic: **Architecture Overview**
 
 **Summary:**

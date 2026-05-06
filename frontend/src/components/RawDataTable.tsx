@@ -1,5 +1,5 @@
 import React, { useState, memo, useMemo, useEffect } from "react";
-import { Database, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Search, X } from "lucide-react";
+import { Database, Loader2, ArrowUp, ArrowDown, ArrowUpDown, Search, X, Maximize2, Minimize2 } from "lucide-react";
 import { api } from "../api/api";
 
 interface RawDataTableProps {
@@ -19,11 +19,29 @@ export const RawDataTable = memo(
     const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: 'asc' | 'desc' | null }>({ key: null, direction: null });
     const [filters, setFilters] = useState<{ [key: string]: string }>({});
     const [activeFilters, setActiveFilters] = useState<{ [key: string]: boolean }>({});
+    const [isFullscreen, setIsFullscreen] = useState(false);
 
     // Sync with initialData if it changes
     useEffect(() => {
       if (initialData) setRawDataTable(initialData);
     }, [initialData]);
+
+    // Handle Escape key to close fullscreen
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "Escape" && isFullscreen) {
+          setIsFullscreen(false);
+        }
+      };
+
+      if (isFullscreen) {
+        window.addEventListener("keydown", handleKeyDown);
+      }
+
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }, [isFullscreen]);
 
     const handleToggle = async (e: React.SyntheticEvent) => {
       const details = e.target as HTMLDetailsElement;
@@ -100,18 +118,60 @@ export const RawDataTable = memo(
 
     if (!initialData && !hasData) return null;
 
+    const Container = isFullscreen ? "div" : "details";
+    const Header = isFullscreen ? "div" : "summary";
+
     return (
-      <div className="raw-data-table-wrapper">
-        <details onToggle={handleToggle}>
-          <summary className="raw-data-summary">
-            <Database size={16} style={{ marginRight: "8px", opacity: 0.7 }} />
-            View Data{" "}
-            {rawDataTable.length > 0
-              ? `(${rawDataTable.length} rows)`
-              : hasData
-                ? "(Click to load)"
-                : ""}
-          </summary>
+      <div className={`raw-data-table-wrapper ${isFullscreen ? 'fullscreen' : ''}`}>
+        <Container 
+          {...(!isFullscreen ? { onToggle: handleToggle } : {})} 
+          open={!isFullscreen ? undefined : true}
+          style={isFullscreen ? { display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' } : {}}
+        >
+          <Header 
+            className="raw-data-summary" 
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            onClick={(e) => {
+              // Prevent closing the table by clicking the header while in fullscreen
+              if (isFullscreen) {
+                e.preventDefault();
+              }
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <Database size={16} style={{ marginRight: "8px", opacity: 0.7 }} />
+              View Data{" "}
+              {rawDataTable.length > 0
+                ? `(${rawDataTable.length} rows)`
+                : hasData
+                  ? "(Click to load)"
+                  : ""}
+            </div>
+            
+            {(rawDataTable.length > 0 || isFullscreen) && (
+              <button
+                className="fullscreen-toggle"
+                onClick={(e) => {
+                  e.stopPropagation(); // Prevent summary toggle
+                  e.preventDefault();
+                  setIsFullscreen(!isFullscreen);
+                }}
+                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '4px',
+                  borderRadius: 'var(--radius-sm)',
+                }}
+              >
+                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            )}
+          </Header>
           <div
             className="raw-data-scroll"
             style={{
@@ -209,7 +269,7 @@ export const RawDataTable = memo(
               </div>
             )}
           </div>
-        </details>
+        </Container>
       </div>
     );
   },
