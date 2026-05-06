@@ -32,6 +32,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     tool_state = {
         "last_sql_query": "",
         "last_raw_data": None,
+        "best_raw_data": None,  # Largest result set across all queries (for data grid)
         "all_sql_queries": [],  # List of dicts: {"query": str, "time": float}
     }
 
@@ -163,6 +164,12 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
             tool_state["all_sql_queries"].append({"query": query, "time": q_time})
             tool_state["last_raw_data"] = rows
 
+            # Keep the largest result set for the data grid display
+            # This prevents aggregation queries from overwriting list query results
+            best = tool_state.get("best_raw_data")
+            if not best or len(rows) > len(best):
+                tool_state["best_raw_data"] = rows
+
             logger.info("SQL executed", extra={"data": {
                 **_ctx,
                 "query": query,
@@ -261,5 +268,201 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         _status(f"Found {len(matching_tables)} relevant tables")
         return result
 
-    tools = [execute_read_only_sql, get_table_info, search_schema]
+    @tool
+    def get_table_stats(table_name: str) -> str:
+        """
+        Get statistical overview of a table: total row count, and for each column:
+        null count, distinct value count, and data type.
+        Use this to understand data quality, volume, and what columns contain
+        before writing analytical queries.
+        """
+        _status(f"Analyzing table statistics: {table_name}...")
+        start = time.time()
+        table_name = table_name.strip()
+
+        try:
+            schema_prefix = f"{db._schema}." if db._schema else ""
+            full_table = f"{schema_prefix}{table_name}"
+
+            with db._engine.connect() as conn:
+                # Get row count
+                count_result = conn.execute(text(f"SELECT COUNT(*) FROM {full_table}"))
+                total_rows = count_result.scalar()
+
+                # Get column info with null counts and distinct counts
+                # Use information_schema for column names/types
+                db_inspector = inspect(db._engine)
+                columns = db_inspector.get_columns(table_name, schema=db._schema)
+
+                stats_lines = [f"Table: {table_name}", f"Total Rows: {total_rows}", ""]
+                stats_lines.append("Column Statistics:")
+
+                for col in columns:
+                    col_name = col["name"]
+                    col_type = str(col["type"])
+                    try:
+                        stat_query = text(
+                            f"SELECT COUNT(*) - COUNT({col_name}) as nulls, "
+                            f"COUNT(DISTINCT {col_name}) as distincts "
+                            f"FROM {full_table}"
+                        )
+                        stat_result = conn.execute(stat_query)
+                        row = stat_result.fetchone()
+                        null_count = row[0]
+                        distinct_count = row[1]
+                        null_pct = round((null_count / total_rows * 100), 1) if total_rows > 0 else 0
+                        stats_lines.append(
+                            f"  - {col_name} ({col_type}): {distinct_count} distinct values, "
+                            f"{null_count} nulls ({null_pct}%)"
+                        )
+                    except Exception:
+                        stats_lines.append(f"  - {col_name} ({col_type}): stats unavailable")
+
+            elapsed_ms = round((time.time() - start) * 1000, 2)
+            logger.info("Tool: get_table_stats", extra={"data": {
+                **_ctx, "table": table_name, "rows": total_rows, "time_ms": elapsed_ms,
+            }})
+            return "\n".join(stats_lines)
+
+        except Exception as e:
+            logger.error("get_table_stats failed", extra={"data": {
+                **_ctx, "table": table_name, "error": str(e),
+            }})
+            return f"Error getting stats for {table_name}: {str(e)}"
+
+    @tool
+    def get_column_values(table_name: str, column_name: str) -> str:
+        """
+        Get distinct values and their counts for a specific column.
+        Use this for flag, status, enum, boolean, or category columns
+        to understand what values exist BEFORE writing analytical queries.
+        Example: get_column_values('agents', 'status') -> 'Active: 500, Dormant: 1037, Blocked: 21'
+        """
+        _status(f"Checking values in {table_name}.{column_name}...")
+        start = time.time()
+        table_name = table_name.strip()
+        column_name = column_name.strip()
+
+        try:
+            schema_prefix = f"{db._schema}." if db._schema else ""
+            full_table = f"{schema_prefix}{table_name}"
+
+            with db._engine.connect() as conn:
+                query = text(
+                    f"SELECT {column_name}, COUNT(*) as cnt "
+                    f"FROM {full_table} "
+                    f"GROUP BY {column_name} "
+                    f"ORDER BY cnt DESC "
+                    f"LIMIT 50"
+                )
+                result = conn.execute(query)
+                rows = result.fetchall()
+
+                if not rows:
+                    return f"Column {column_name} in {table_name}: no data found."
+
+                lines = [f"Distinct values in {table_name}.{column_name}:"]
+                for row in rows:
+                    val = row[0]
+                    cnt = row[1]
+                    if val is None:
+                        val = "NULL"
+                    elif isinstance(val, bool):
+                        val = str(val).lower()
+                    lines.append(f"  - {val}: {cnt}")
+
+            elapsed_ms = round((time.time() - start) * 1000, 2)
+            logger.info("Tool: get_column_values", extra={"data": {
+                **_ctx, "table": table_name, "column": column_name,
+                "distinct_values": len(rows), "time_ms": elapsed_ms,
+            }})
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.error("get_column_values failed", extra={"data": {
+                **_ctx, "table": table_name, "column": column_name, "error": str(e),
+            }})
+            return f"Error: {str(e)}"
+
+    @tool
+    def get_table_relationships(table_name: str) -> str:
+        """
+        Detect foreign key relationships for a table.
+        Shows which columns reference other tables (outgoing FKs)
+        and which other tables reference this table (incoming FKs).
+        Use this to understand how tables are connected before writing JOINs.
+        """
+        _status(f"Detecting relationships for {table_name}...")
+        start = time.time()
+        table_name = table_name.strip()
+
+        try:
+            db_inspector = inspect(db._engine)
+
+            # Outgoing foreign keys (this table references others)
+            fks = db_inspector.get_foreign_keys(table_name, schema=db._schema)
+            lines = [f"Relationships for table: {table_name}", ""]
+
+            if fks:
+                lines.append("Outgoing References (this table -> other tables):")
+                for fk in fks:
+                    cols = ", ".join(fk["constrained_columns"])
+                    ref_table = fk["referred_table"]
+                    ref_cols = ", ".join(fk["referred_columns"])
+                    ref_schema = fk.get("referred_schema", "")
+                    ref_full = f"{ref_schema}.{ref_table}" if ref_schema else ref_table
+                    lines.append(f"  - {cols} -> {ref_full}({ref_cols})")
+            else:
+                lines.append("No outgoing foreign keys found.")
+
+            # Incoming foreign keys (other tables reference this one)
+            lines.append("")
+            incoming = []
+            for other_table in usable_tables:
+                if other_table == table_name:
+                    continue
+                try:
+                    other_fks = db_inspector.get_foreign_keys(other_table, schema=db._schema)
+                    for fk in other_fks:
+                        if fk["referred_table"] == table_name:
+                            cols = ", ".join(fk["constrained_columns"])
+                            incoming.append(f"  - {other_table}({cols}) -> this table")
+                except Exception:
+                    continue
+
+            if incoming:
+                lines.append("Incoming References (other tables -> this table):")
+                lines.extend(incoming[:20])  # Limit to 20 to avoid token explosion
+            else:
+                lines.append("No incoming foreign keys detected.")
+
+            # Also detect likely FK columns by naming convention (_id suffix)
+            lines.append("")
+            columns = db_inspector.get_columns(table_name, schema=db._schema)
+            likely_fks = [c["name"] for c in columns if c["name"].endswith("_id")]
+            if likely_fks:
+                lines.append(f"Columns that may be foreign keys (by naming convention): {', '.join(likely_fks)}")
+
+            elapsed_ms = round((time.time() - start) * 1000, 2)
+            logger.info("Tool: get_table_relationships", extra={"data": {
+                **_ctx, "table": table_name,
+                "outgoing_fks": len(fks), "incoming_fks": len(incoming),
+                "time_ms": elapsed_ms,
+            }})
+            return "\n".join(lines)
+
+        except Exception as e:
+            logger.error("get_table_relationships failed", extra={"data": {
+                **_ctx, "table": table_name, "error": str(e),
+            }})
+            return f"Error: {str(e)}"
+
+    tools = [
+        execute_read_only_sql,
+        get_table_info,
+        search_schema,
+        get_table_stats,
+        get_column_values,
+        get_table_relationships,
+    ]
     return tools, tool_state

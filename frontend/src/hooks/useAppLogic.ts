@@ -1,64 +1,91 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "../api/api";
-import type { Interaction } from "../types";
+import type { Interaction, Session } from "../types";
 
 export const useAppLogic = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
     return localStorage.getItem("currentSessionId") || Date.now().toString();
   });
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const loadedSessionsRef = useRef<Set<string>>(new Set());
 
   // Sync session to localStorage
   useEffect(() => {
     localStorage.setItem("currentSessionId", currentSessionId);
   }, [currentSessionId]);
 
-  // Fetch History on Mount
+  // Fetch session list on mount (fast — no heavy data)
   useEffect(() => {
-    const fetchHistory = async () => {
+    const fetchSessions = async () => {
       try {
-        const data = await api.fetchHistory();
-        const mappedData = data.map((item: any, idx: number) => ({
-          ...item,
-          id: item.id || `hist-${idx}-${Date.now()}`,
-          session_id: String(item.session_id || "default"),
+        const data = await api.fetchSessions();
+        const mapped: Session[] = data.map((s: any) => ({
+          id: String(s.id),
+          title: s.title || "New Chat",
+          count: s.count || 0,
+          last_activity: s.last_activity || "",
         }));
+        setSessions(mapped);
 
-        setInteractions((prev) => {
-          const existingIds = new Set(prev.map((i) => i.id));
-          const newItems = mappedData.filter(
-            (i: any) => !existingIds.has(i.id),
-          );
-          return [...newItems, ...prev];
-        });
-
+        // Select persisted session or most recent
         const persistedSid = localStorage.getItem("currentSessionId");
-        const sessionExists = mappedData.some(
-          (i: any) => i.session_id === persistedSid,
-        );
+        const sessionExists = mapped.some((s) => s.id === persistedSid);
 
         if (persistedSid && sessionExists) {
           setCurrentSessionId(persistedSid);
-        } else if (mappedData.length > 0) {
-          const sessions = Array.from(
-            new Set(mappedData.map((i: any) => i.session_id)),
-          );
-          const latestSession = sessions[sessions.length - 1];
-          if (latestSession) {
-            setCurrentSessionId(latestSession as string);
-          }
+        } else if (mapped.length > 0) {
+          setCurrentSessionId(mapped[0].id);
         }
       } catch (error) {
-        console.error("Failed to fetch history", error);
+        console.error("Failed to fetch sessions", error);
       }
     };
-    fetchHistory();
+    fetchSessions();
   }, []);
 
+  // Load history for current session (lazy — only when session changes)
+  const loadSessionHistory = useCallback(async (sessionId: string) => {
+    if (loadedSessionsRef.current.has(sessionId)) return;
+
+    try {
+      const data = await api.fetchHistory(sessionId);
+      const mappedData = data.map((item: any, idx: number) => ({
+        ...item,
+        id: item.id || `hist-${idx}-${Date.now()}`,
+        session_id: String(item.session_id || "default"),
+      }));
+
+      loadedSessionsRef.current.add(sessionId);
+
+      setInteractions((prev) => {
+        const existingIds = new Set(prev.map((i) => i.id));
+        const newItems = mappedData.filter(
+          (i: any) => !existingIds.has(i.id),
+        );
+        return [...prev, ...newItems];
+      });
+    } catch (error) {
+      console.error("Failed to fetch session history", error);
+    }
+  }, []);
+
+  // Trigger history load when session changes
+  useEffect(() => {
+    if (currentSessionId) {
+      loadSessionHistory(currentSessionId);
+    }
+  }, [currentSessionId, loadSessionHistory]);
+
   const handleNewChat = () => {
-    setCurrentSessionId(Date.now().toString());
+    const newId = Date.now().toString();
+    setCurrentSessionId(newId);
+    setSessions((prev) => [
+      { id: newId, title: "New Chat...", count: 0, last_activity: "" },
+      ...prev,
+    ]);
   };
 
   const handleDeleteSession = async (sessionId: string) => {
@@ -67,6 +94,8 @@ export const useAppLogic = () => {
       setInteractions((prev) =>
         prev.filter((i) => (i as any).session_id !== sessionId),
       );
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      loadedSessionsRef.current.delete(sessionId);
       if (currentSessionId === sessionId) {
         handleNewChat();
       }
@@ -123,6 +152,17 @@ export const useAppLogic = () => {
       } as any,
     ]);
     setIsLoading(true);
+
+    // Update session title if this is the first query
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === currentSessionId);
+      if (idx !== -1 && (prev[idx].title === "New Chat..." || prev[idx].title === "New Chat")) {
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], title: query.slice(0, 80) };
+        return updated;
+      }
+      return prev;
+    });
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -234,6 +274,7 @@ export const useAppLogic = () => {
   return {
     currentSessionId,
     setCurrentSessionId,
+    sessions,
     interactions,
     setInteractions,
     isLoading,

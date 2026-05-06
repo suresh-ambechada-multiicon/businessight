@@ -179,6 +179,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             raw_data=None,
             sql_query="",
             execution_time=0.0,
+            has_data=False,
         )
 
         send_status(ctx.task_id, "AI is analyzing your query...")
@@ -221,6 +222,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         history_entry.raw_data = result["raw_data"]
         history_entry.sql_query = result["sql_query"]
         history_entry.execution_time = exec_time
+        history_entry.has_data = bool(result["raw_data"] and len(result["raw_data"]) > 0)
         history_entry.save()
 
         # ── 12. Yield Final Result ─────────────────────────────────────
@@ -254,6 +256,12 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                 "estimated_cost": round(cost, 4),
             },
         }
+
+        # Persist token usage to DB for history display
+        history_entry.input_tokens = in_tokens
+        history_entry.output_tokens = out_tokens
+        history_entry.estimated_cost = round(cost, 4)
+        history_entry.save(update_fields=["input_tokens", "output_tokens", "estimated_cost"])
 
         # ── Final Log ──────────────────────────────────────────────────
         logger.info(

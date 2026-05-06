@@ -5,8 +5,14 @@ const HOST = window.location.hostname;
 const BASE_URL = `http://${HOST}:8000/api/v1`;
 
 export const api = {
-  fetchHistory: async () => {
-    const response = await axios.get(`${BASE_URL}/history/`);
+  fetchSessions: async () => {
+    const response = await axios.get(`${BASE_URL}/sessions/`);
+    return response.data;
+  },
+
+  fetchHistory: async (sessionId?: string) => {
+    const params = sessionId ? `?session_id=${sessionId}` : "";
+    const response = await axios.get(`${BASE_URL}/history/${params}`);
     return response.data;
   },
 

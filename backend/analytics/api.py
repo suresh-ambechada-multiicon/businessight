@@ -90,10 +90,49 @@ def cancel_query(request, session_id: str):
     return {"status": "Cancellation signal sent"}
 
 
+@api.get("/sessions/")
+def get_sessions(request):
+    """Fast endpoint returning only session summaries for sidebar."""
+    from django.db.models import Count, Max, Min
+    sessions = list(
+        QueryHistory.objects
+        .filter(is_deleted=False)
+        .values("session_id")
+        .annotate(
+            count=Count("id"),
+            last_activity=Max("created_at"),
+            first_query_id=Min("id"),
+        )
+        .order_by("-last_activity")
+    )
+
+    # Bulk fetch first query text per session using Min(id) annotations
+    first_ids = [s["first_query_id"] for s in sessions if s["first_query_id"]]
+    first_queries = {}
+    if first_ids:
+        for entry in QueryHistory.objects.filter(id__in=first_ids).values("id", "query", "session_id"):
+            first_queries[entry["session_id"]] = entry["query"]
+
+    result = []
+    for s in sessions:
+        sid = s["session_id"]
+        title = first_queries.get(sid, "New Chat")
+        result.append({
+            "id": sid,
+            "title": title[:80],
+            "count": s["count"],
+            "last_activity": s["last_activity"].isoformat() if s["last_activity"] else "",
+        })
+    return result
+
+
 @api.get("/history/")
-def get_history(request, limit: int = 2000, offset: int = 0):
-    # Fetch most recent history first, with pagination, excluding deleted ones
-    history = QueryHistory.objects.filter(is_deleted=False).order_by("-created_at")[offset:offset+limit]
+def get_history(request, session_id: str = None, limit: int = 200, offset: int = 0):
+    # Filter by session_id if provided (fast per-session load)
+    qs = QueryHistory.objects.filter(is_deleted=False)
+    if session_id:
+        qs = qs.filter(session_id=session_id)
+    history = qs.order_by("-created_at")[offset:offset+limit]
     res = []
     for h in history:
         res.append(
@@ -105,14 +144,19 @@ def get_history(request, limit: int = 2000, offset: int = 0):
                 "result": {
                     "report": h.report,
                     "chart_config": h.chart_config,
-                    "raw_data": [], # Lazy load this!
+                    "raw_data": [],  # Lazy load via /history/{id}/data/
                     "sql_query": h.sql_query,
                     "execution_time": h.execution_time,
                     "has_data": bool(h.raw_data and len(h.raw_data) > 0)
                 },
+                "usage": {
+                    "input_tokens": h.input_tokens or 0,
+                    "output_tokens": h.output_tokens or 0,
+                    "estimated_cost": h.estimated_cost or 0,
+                } if h.input_tokens else None,
             }
         )
-    # Reverse the list so the frontend receives them in oldest-first order (newest at the bottom of the chat)
+    # Reverse so frontend gets oldest-first order (newest at bottom)
     return res[::-1]
 
 

@@ -454,7 +454,9 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
     last_non_empty_report = stream_data.get("last_non_empty_report", "")
 
     # Recovery data from tool execution
-    recovered_raw_data = tool_state.get("last_raw_data")
+    # Prefer best_raw_data (largest result set) so aggregation queries don't
+    # overwrite the actual list data the user wanted to see
+    recovered_raw_data = tool_state.get("best_raw_data") or tool_state.get("last_raw_data")
     recovered_sql_query = tool_state.get("last_sql_query", "")
 
     # Parse the structured response
@@ -571,89 +573,206 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
 
 # ── Auto Chart Generation ──────────────────────────────────────────────
 
+def _is_flag_or_boolean_column(key: str, sample_values: list) -> bool:
+    """Check if a column is a boolean flag that shouldn't be charted."""
+    flag_prefixes = ("is_", "has_", "can_", "should_", "was_", "did_")
+    flag_names = ("active", "blocked", "deleted", "enabled", "archived", "verified", "status")
+    key_lower = key.lower()
+
+    if any(key_lower.startswith(p) for p in flag_prefixes):
+        return True
+    if key_lower in flag_names:
+        return True
+
+    # Check if all values are 0/1 or True/False
+    unique_vals = set(sample_values)
+    if unique_vals <= {0, 1, 0.0, 1.0, True, False, None}:
+        return True
+
+    return False
+
+
+def _is_id_or_key_column(key: str) -> bool:
+    """Check if a column is an ID/key that shouldn't be charted."""
+    key_lower = key.lower()
+    if key_lower == "id" or key_lower.endswith("_id") or key_lower.endswith("_pk"):
+        return True
+    if key_lower in ("pk", "key", "uuid", "guid"):
+        return True
+    return False
+
+
+def _validate_chart_config(chart_config: dict | None, raw_data: list | None) -> dict | None:
+    """
+    Validate and clean a chart config (AI-generated or auto-generated).
+    Removes useless datasets (no variance, boolean flags) and returns None
+    if no valid datasets remain.
+    """
+    if not chart_config or not isinstance(chart_config, dict):
+        return chart_config
+
+    data_obj = chart_config.get("data", {})
+    if not data_obj:
+        return None
+
+    datasets = data_obj.get("datasets", [])
+    labels = data_obj.get("labels", [])
+
+    if not datasets or not labels:
+        return None
+
+    # Get sample values from raw_data for flag detection
+    sample_values_map = {}
+    if raw_data and isinstance(raw_data, list) and len(raw_data) > 0:
+        for key in raw_data[0]:
+            sample_values_map[key] = [row.get(key) for row in raw_data[:50]]
+
+    # Filter out useless datasets
+    valid_datasets = []
+    for ds in datasets:
+        label = ds.get("label", "")
+        data_points = ds.get("data", [])
+
+        # Skip if no data
+        if not data_points:
+            continue
+
+        # Skip if no variance (all same value)
+        numeric_points = [p for p in data_points if isinstance(p, (int, float))]
+        if numeric_points and len(set(numeric_points)) <= 1:
+            continue
+
+        # Skip boolean/flag columns
+        original_key = label.lower().replace(" ", "_")
+        sample = sample_values_map.get(original_key, numeric_points)
+        if _is_flag_or_boolean_column(original_key, sample):
+            continue
+
+        # Skip ID columns
+        if _is_id_or_key_column(original_key):
+            continue
+
+        valid_datasets.append(ds)
+
+    if not valid_datasets:
+        return None
+
+    chart_config["data"]["datasets"] = valid_datasets
+    return chart_config
+
 
 def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
     """
     Fallback chart generation when the AI doesn't produce one.
-    Only generates if the data has numeric columns and >5 rows,
-    UNLESS the user explicitly asked for a chart.
+    
+    KEY PRINCIPLE: Only auto-generate charts from AGGREGATED data (few rows 
+    with clear categories + numeric values). NEVER chart raw individual records
+    (e.g. 1000 agent rows) — that data belongs in the data grid, not a chart.
+    
+    The AI should generate chart_config itself for analytical queries since
+    only the AI understands what the user asked for.
     """
-    is_empty_chart = False
+    # First validate any AI-generated chart
     if chart_config and isinstance(chart_config, dict):
         data_obj = chart_config.get("data", {})
-        if not data_obj.get("labels") or not data_obj.get("datasets"):
-            is_empty_chart = True
+        has_content = data_obj.get("labels") and data_obj.get("datasets")
+        if has_content:
+            # AI generated a chart — validate it (remove flag/boolean datasets)
+            return _validate_chart_config(chart_config, raw_data)
 
-    # Check if user explicitly asked for a chart in the query
+    # Check if user explicitly asked for a chart
     is_explicit_request = any(
         word in (query or "").lower()
         for word in ["chart", "graph", "plot", "visualize"]
     )
-    threshold = 1 if is_explicit_request else 5
 
-    if (
-        (not chart_config or is_empty_chart)
-        and raw_data
-        and isinstance(raw_data, list)
-        and len(raw_data) >= threshold
-    ):
-        try:
-            keys = [k for k in raw_data[0].keys() if k != "id"]
-            label_key = keys[0]
-            value_keys = [
-                k for k in keys if isinstance(raw_data[0][k], (int, float, Decimal))
-            ]
+    if not raw_data or not isinstance(raw_data, list) or len(raw_data) < 2:
+        return None
 
-            if value_keys:
-                labels = [str(row.get(label_key, "")) for row in raw_data]
-                datasets = []
-                datasets = []
-                for vk in value_keys[:5]:
-                    data_points = [float(row.get(vk, 0)) for row in raw_data]
-                    # Check for variance: don't chart if all values are the same (e.g. all 1s or all 0s)
-                    if len(set(data_points)) > 1:
-                        datasets.append(
-                            {
-                                "label": vk.replace("_", " ").title(),
-                                "data": data_points[:30],
-                            }
-                        )
+    # Detect if data is aggregated vs individual records
+    # Aggregated data: few rows (<= 30), labels are mostly unique categories
+    # Individual records: many rows (> 30), labels have many unique values
+    num_rows = len(raw_data)
 
-                if not datasets:
-                    return None
+    # For large datasets (>30 rows), this is likely raw list data — skip auto-chart
+    # Unless user explicitly asked for a chart
+    if num_rows > 30 and not is_explicit_request:
+        return None
 
-                chart_type = (
-                    "line"
-                    if any(
-                        k.lower() in label_key.lower()
-                        for k in ["date", "time", "month", "year"]
-                    )
-                    else "bar"
-                )
-                chart_config = {
-                    "type": chart_type,
-                    "x_label": label_key.replace("_", " ").title(),
-                    "y_label": value_keys[0].replace("_", " ").title()
-                    if len(value_keys) == 1
-                    else "Value",
-                    "data": {"labels": labels[:30], "datasets": datasets},
-                }
+    try:
+        all_keys = list(raw_data[0].keys())
 
-                logger.info(
-                    "Auto-generated chart",
-                    extra={
-                        "data": {
-                            "chart_type": chart_type,
-                            "data_points": len(labels),
-                            "datasets": len(datasets),
-                        }
-                    },
-                )
-        except Exception:
-            pass
+        # Find label key (first non-ID string column)
+        label_key = None
+        for k in all_keys:
+            if _is_id_or_key_column(k):
+                continue
+            sample_val = raw_data[0].get(k)
+            if isinstance(sample_val, str):
+                label_key = k
+                break
+        if not label_key:
+            label_key = next((k for k in all_keys if not _is_id_or_key_column(k)), all_keys[0])
 
-    # Final cleanup: None out empty configs
+        # Check if labels are mostly unique (= individual records, not aggregated)
+        label_values = [str(row.get(label_key, "")) for row in raw_data]
+        unique_ratio = len(set(label_values)) / len(label_values) if label_values else 0
+
+        # If > 70% of labels are unique AND > 10 rows, it's individual records — skip
+        if unique_ratio > 0.7 and num_rows > 10 and not is_explicit_request:
+            return None
+
+        # Find chartable numeric columns
+        value_keys = []
+        for k in all_keys:
+            if _is_id_or_key_column(k) or k == label_key:
+                continue
+            sample_val = raw_data[0].get(k)
+            if not isinstance(sample_val, (int, float, Decimal)):
+                continue
+            sample_values = [row.get(k) for row in raw_data[:50]]
+            if _is_flag_or_boolean_column(k, sample_values):
+                continue
+            value_keys.append(k)
+
+        if not value_keys:
+            return None
+
+        labels = label_values[:30]
+        datasets = []
+        for vk in value_keys[:5]:
+            data_points = [float(row.get(vk, 0) or 0) for row in raw_data[:30]]
+            if len(set(data_points)) > 1:
+                datasets.append({
+                    "label": vk.replace("_", " ").title(),
+                    "data": data_points,
+                })
+
+        if not datasets:
+            return None
+
+        chart_type = (
+            "line"
+            if any(k.lower() in label_key.lower() for k in ["date", "time", "month", "year"])
+            else "bar"
+        )
+        chart_config = {
+            "type": chart_type,
+            "x_label": label_key.replace("_", " ").title(),
+            "y_label": value_keys[0].replace("_", " ").title() if len(value_keys) == 1 else "Value",
+            "data": {"labels": labels, "datasets": datasets},
+        }
+
+        logger.info("Auto-generated chart", extra={"data": {
+            "chart_type": chart_type, "data_points": len(labels), "datasets": len(datasets),
+        }})
+
+    except Exception:
+        pass
+
+    # Final cleanup
     if chart_config and isinstance(chart_config, dict) and not chart_config.get("data"):
         chart_config = None
 
     return chart_config
+

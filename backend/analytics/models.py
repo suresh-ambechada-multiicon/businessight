@@ -23,6 +23,7 @@ class QueryHistory(models.Model):
     input_tokens = models.IntegerField(null=True, blank=True)
     output_tokens = models.IntegerField(null=True, blank=True)
     estimated_cost = models.FloatField(null=True, blank=True)
+    has_data = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)
 

@@ -48,7 +48,13 @@ class ChartConfig(BaseModel):
 
 class AnalyticsResponse(BaseModel):
     report: str = Field(
-        description="A detailed, natural language business summary. Use Markdown (bold, lists). MUST NOT BE EMPTY. **CRITICAL: NEVER list raw rows, items, or data points here; ONLY provide analysis and insights.**"
+        description=(
+            "A natural language summary of the query results. Use Markdown (headers, bold, lists). MUST NOT BE EMPTY. "
+            "For LIST/SHOW queries: state the total count (e.g. 'Found 150 dormant agents'), then highlight key patterns, "
+            "distributions, or notable entries. Do NOT dump all rows — the raw data grid handles that. "
+            "For ANALYTICAL queries: provide deep insights, trends, comparisons, and percentages. "
+            "For DETAIL queries: format the entity details with bullet points and bold labels."
+        )
     )
     chart_config: ChartConfig | None = Field(
         description="Chart JSON. Mandatory for trends/multiple values."

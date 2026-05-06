@@ -25,4 +25,6 @@ export interface InteractionResult {
 export interface Session {
   id: string;
   title: string;
+  count?: number;
+  last_activity?: string;
 }

@@ -29,6 +29,7 @@ function App() {
   const {
     currentSessionId,
     setCurrentSessionId,
+    sessions,
     interactions,
     isLoading,
     handleNewChat,
@@ -75,23 +76,15 @@ function App() {
     });
   };
 
-  const sessions = useMemo(() => {
-    const sessionMap = new Map<string, string>();
-    interactions.forEach((item) => {
-      const sid = (item as any).session_id || "default";
-      if (!sessionMap.has(sid)) {
-        sessionMap.set(sid, item.query);
-      }
-    });
-
-    const list = Array.from(sessionMap.entries())
-      .map(([id, title]) => ({ id, title }))
-      .reverse();
+  // Sessions come from the hook now (loaded from /sessions/ endpoint)
+  // Ensure current session always appears in the list
+  const displaySessions = useMemo(() => {
+    const list = [...sessions];
     if (!list.find((s) => s.id === currentSessionId)) {
       list.unshift({ id: currentSessionId, title: "New Chat..." });
     }
     return list;
-  }, [interactions, currentSessionId]);
+  }, [sessions, currentSessionId]);
 
   const currentInteractions = useMemo(
     () =>
@@ -107,7 +100,7 @@ function App() {
         theme={theme}
         toggleTheme={toggleTheme}
         openSettings={() => setIsSettingsOpen(true)}
-        sessions={sessions}
+        sessions={displaySessions}
         currentSessionId={currentSessionId}
         onSelectSession={setCurrentSessionId}
         onNewChat={handleNewChat}
