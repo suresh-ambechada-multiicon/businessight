@@ -62,14 +62,34 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
     cache.delete(f"cancel_{payload.session_id}")
 
     # ── 1. Database Connection ──────────────────────────────────────────
+    from sqlalchemy.exc import SQLAlchemyError
+
     from analytics.services.status import send_status
 
     send_status(ctx.task_id, "Connecting to database...")
     step_start = time.time()
     db_uri = normalize_db_uri(payload.db_url.strip())
     engine_args = build_engine_args(db_uri)
-    db_uri, active_schema = detect_active_schema(db_uri, engine_args, ctx)
-    db = create_database(db_uri, engine_args, active_schema)
+
+    try:
+        db_uri, active_schema = detect_active_schema(db_uri, engine_args, ctx)
+        db = create_database(db_uri, engine_args, active_schema)
+        # Test connection explicitly
+        with db._engine.connect() as conn:
+            pass
+    except SQLAlchemyError as e:
+        error_msg = (
+            f"Database connection failed: {str(e.__cause__) if e.__cause__ else str(e)}"
+        )
+        logger.error(error_msg, extra={"data": ctx.to_dict()})
+        yield {"event": "error", "data": {"error": error_msg}}
+        return
+    except Exception as e:
+        error_msg = f"Unexpected database error: {str(e)}"
+        logger.error(error_msg, extra={"data": ctx.to_dict()})
+        yield {"event": "error", "data": {"error": error_msg}}
+        return
+
     connect_time = round((time.time() - step_start) * 1000, 2)
 
     logger.info(
@@ -173,7 +193,9 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # Check if a fatal error occurred during streaming
         if result_holder.has_error:
-            history_entry.report = "Error occurred during analysis. Check logs for details."
+            history_entry.report = (
+                "Error occurred during analysis. Check logs for details."
+            )
             history_entry.save()
             return
 

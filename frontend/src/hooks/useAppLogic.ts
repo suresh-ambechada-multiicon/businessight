@@ -23,22 +23,28 @@ export const useAppLogic = () => {
         const mappedData = data.map((item: any, idx: number) => ({
           ...item,
           id: item.id || `hist-${idx}-${Date.now()}`,
-          session_id: String(item.session_id || "default")
+          session_id: String(item.session_id || "default"),
         }));
-        
-        setInteractions(prev => {
-          const existingIds = new Set(prev.map(i => i.id));
-          const newItems = mappedData.filter((i: any) => !existingIds.has(i.id));
+
+        setInteractions((prev) => {
+          const existingIds = new Set(prev.map((i) => i.id));
+          const newItems = mappedData.filter(
+            (i: any) => !existingIds.has(i.id),
+          );
           return [...newItems, ...prev];
         });
-        
+
         const persistedSid = localStorage.getItem("currentSessionId");
-        const sessionExists = mappedData.some((i: any) => i.session_id === persistedSid);
+        const sessionExists = mappedData.some(
+          (i: any) => i.session_id === persistedSid,
+        );
 
         if (persistedSid && sessionExists) {
           setCurrentSessionId(persistedSid);
         } else if (mappedData.length > 0) {
-          const sessions = Array.from(new Set(mappedData.map((i: any) => i.session_id)));
+          const sessions = Array.from(
+            new Set(mappedData.map((i: any) => i.session_id)),
+          );
           const latestSession = sessions[sessions.length - 1];
           if (latestSession) {
             setCurrentSessionId(latestSession as string);
@@ -58,7 +64,9 @@ export const useAppLogic = () => {
   const handleDeleteSession = async (sessionId: string) => {
     try {
       await api.deleteSession(sessionId);
-      setInteractions(prev => prev.filter(i => (i as any).session_id !== sessionId));
+      setInteractions((prev) =>
+        prev.filter((i) => (i as any).session_id !== sessionId),
+      );
       if (currentSessionId === sessionId) {
         handleNewChat();
       }
@@ -73,28 +81,46 @@ export const useAppLogic = () => {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    api.cancelQuery(currentSessionId).catch(err => console.error("Failed to signal backend cancellation", err));
+    api
+      .cancelQuery(currentSessionId)
+      .catch((err) =>
+        console.error("Failed to signal backend cancellation", err),
+      );
     setIsLoading(false);
-    
+
     setInteractions((prev) => {
       if (prev.length === 0) return prev;
       const last = prev[prev.length - 1];
       if (!last.result) {
-        return prev.map((i, idx) => 
-          idx === prev.length - 1 
-          ? { ...i, status: "Analysis stopped.", result: { report: "_Analysis cancelled by user._" } } 
-          : i
+        return prev.map((i, idx) =>
+          idx === prev.length - 1
+            ? {
+                ...i,
+                status: "Analysis stopped.",
+                result: { report: "_Analysis cancelled by user._" },
+              }
+            : i,
         );
       }
       return prev;
     });
   };
 
-  const handleQuery = async (query: string, model: string, apiKey: string, dbUrl: string) => {
+  const handleQuery = async (
+    query: string,
+    model: string,
+    apiKey: string,
+    dbUrl: string,
+  ) => {
     const newInteractionId = Date.now();
     setInteractions((prev) => [
       ...prev,
-      { id: newInteractionId, session_id: currentSessionId, query, result: null } as any,
+      {
+        id: newInteractionId,
+        session_id: currentSessionId,
+        query,
+        result: null,
+      } as any,
     ]);
     setIsLoading(true);
 
@@ -113,7 +139,8 @@ export const useAppLogic = () => {
       const taskId = response.task_id;
       const streamResponse = await api.streamResults(taskId, controller.signal);
 
-      if (!streamResponse.ok) throw new Error(`HTTP error! status: ${streamResponse.status}`);
+      if (!streamResponse.ok)
+        throw new Error(`HTTP error! status: ${streamResponse.status}`);
 
       const reader = streamResponse.body?.getReader();
       const decoder = new TextDecoder();
@@ -141,37 +168,43 @@ export const useAppLogic = () => {
                 prev.map((i) => {
                   if (i.id !== newInteractionId) return i;
                   const updatedInteraction = { ...i };
-                  
+
                   if (eventType === "status") {
                     updatedInteraction.status = eventData.message;
                   } else if (eventType === "tool") {
                     if (eventData.name === "execute_read_only_sql") {
-                       updatedInteraction.status = `SQL: ${eventData.args?.query || ""}`;
+                      updatedInteraction.status = `SQL: ${eventData.args?.query || ""}`;
                     } else {
-                       updatedInteraction.status = `Tool: ${eventData.name}`;
+                      updatedInteraction.status = `Tool: ${eventData.name}`;
                     }
                   } else if (eventType === "report" || eventType === "result") {
                     const prevReport = updatedInteraction.result?.report || "";
-                    const newReport = eventData.report || eventData.content || "";
+                    const newReport =
+                      eventData.report || eventData.content || "";
                     const isDone = eventType === "result";
-                    
-                    updatedInteraction.result = { 
-                      ...(updatedInteraction.result || {}), 
+
+                    updatedInteraction.result = {
+                      ...(updatedInteraction.result || {}),
                       ...eventData,
-                      report: (isDone && !newReport) ? prevReport : (newReport || prevReport)
+                      report:
+                        isDone && !newReport
+                          ? prevReport
+                          : newReport || prevReport,
                     };
                   } else if (eventType === "error") {
-                    updatedInteraction.status = `Error: ${eventData.message}`;
+                    const errorMsg =
+                      eventData.error || eventData.message || "Unknown error";
+                    updatedInteraction.status = `Error: ${errorMsg}`;
                     setIsLoading(false);
                     if (!updatedInteraction.result) {
-                        updatedInteraction.result = { report: eventData.message } as any;
+                      updatedInteraction.result = { report: errorMsg } as any;
                     }
                   } else if (eventType === "usage") {
                     updatedInteraction.usage = eventData;
                   }
-                  
+
                   return updatedInteraction;
-                })
+                }),
               );
             } catch (e) {
               console.error("Error parsing stream chunk", e, trimmedLine);
@@ -180,14 +213,17 @@ export const useAppLogic = () => {
         }
       }
     } catch (error: any) {
-      if (error.name === 'AbortError') return;
+      if (error.name === "AbortError") return;
       console.error("Query failed", error);
       setInteractions((prev) =>
         prev.map((i) =>
           i.id === newInteractionId
-            ? { ...i, result: { report: `An error occurred: ${error.message}` } }
-            : i
-        )
+            ? {
+                ...i,
+                result: { report: `An error occurred: ${error.message}` },
+              }
+            : i,
+        ),
       );
     } finally {
       setIsLoading(false);
@@ -204,6 +240,6 @@ export const useAppLogic = () => {
     handleNewChat,
     handleDeleteSession,
     handleStop,
-    handleQuery
+    handleQuery,
   };
 };
