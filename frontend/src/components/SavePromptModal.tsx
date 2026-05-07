@@ -85,12 +85,11 @@ export const SavePromptModal: React.FC<SavePromptModalProps> = ({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="modal-content"
+        className="modal-content modal-content-wide"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: "600px", padding: "24px" }}
       >
-        <div className="modal-header" style={{ marginBottom: "20px" }}>
-          <h2 style={{ fontSize: "1.25rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "8px" }}>
+        <div className="modal-header modal-header-spaced">
+          <h2 className="modal-title-row">
             <Save size={20} /> Save Prompt
           </h2>
           <button className="icon-btn" onClick={onClose}>
@@ -98,82 +97,43 @@ export const SavePromptModal: React.FC<SavePromptModalProps> = ({
           </button>
         </div>
 
-        <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <label style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--text-secondary)" }}>Prompt Name</label>
+        <div className="modal-body">
+          <div className="form-field">
+            <label className="form-field-label">Prompt Name</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g., Daily Revenue Report"
               autoFocus
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                borderRadius: "8px",
-                border: "1px solid var(--border-color)",
-                background: "var(--bg-secondary)",
-                color: "var(--text-primary)",
-                fontSize: "0.95rem",
-                outline: "none",
-              }}
-              onFocus={(e) => e.target.style.borderColor = "var(--primary-color)"}
-              onBlur={(e) => e.target.style.borderColor = "var(--border-color)"}
+              className="form-field-input"
             />
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <label style={{ fontSize: "0.9rem", fontWeight: 500, color: "var(--text-secondary)" }}>User Query</label>
-            <div style={{ 
-              padding: "12px 14px", 
-              background: "var(--bg-secondary)", 
-              borderRadius: "8px", 
-              fontSize: "0.95rem",
-              color: "var(--text-primary)",
-              border: "1px solid var(--border-color)",
-              opacity: 0.8
-            }}>
+          <div className="form-field">
+            <label className="form-field-label">User Query</label>
+            <div className="form-field-value">
               {query}
             </div>
           </div>
 
 
 
-          {error && <div style={{ color: "var(--danger-color, #ef4444)", fontSize: "0.9rem", marginTop: "-10px" }}>{error}</div>}
+          {error && <div className="error-message">{error}</div>}
         </div>
 
-        <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "24px" }}>
+        <div className="modal-footer">
           <button
             onClick={onClose}
             disabled={isSaving}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "6px",
-              background: "transparent",
-              border: "1px solid var(--border-color)",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-              fontWeight: 500
-            }}
+            className="modal-btn"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={isSaving || !name.trim()}
-            style={{ 
-              display: "flex", 
-              alignItems: "center", 
-              gap: "8px",
-              padding: "8px 16px",
-              borderRadius: "6px",
-              background: "var(--primary-color)",
-              color: "white",
-              border: "none",
-              cursor: "pointer",
-              fontWeight: 500,
-              opacity: (isSaving || !name.trim()) ? 0.7 : 1
-            }}
+            className="modal-btn modal-btn-primary"
           >
             <Save size={16} />
             {isSaving ? "Saving..." : "Save Prompt"}

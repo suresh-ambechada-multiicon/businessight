@@ -47,15 +47,10 @@ export const MainContent: React.FC<MainContentProps> = ({
         <div className="chat-container">
           <div className="chat-scroll-area">
             {interactions.length > visibleCount && (
-              <div style={{ textAlign: "center", padding: "1rem" }}>
+              <div className="load-more-container">
                 <button
-                  className="load-more-btn"
+                  className="load-more-btn load-more-btn-inline"
                   onClick={() => setVisibleCount((prev) => prev + 50)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
                 >
                   <ChevronUp size={14} />
                   Load previous messages
@@ -79,7 +74,7 @@ export const MainContent: React.FC<MainContentProps> = ({
               );
             })}
             <div ref={messagesEndRef} />
-            <div style={{ height: "150px", flexShrink: 0 }} />
+            <div className="spacer" />
           </div>
         </div>
       )}

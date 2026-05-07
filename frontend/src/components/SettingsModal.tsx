@@ -107,7 +107,7 @@ export function SettingsModal({
           </select>
 
           {showCustomInput && (
-            <div style={{ marginTop: "var(--space-2)" }}>
+            <div className="select-custom-option">
               <input
                 type="text"
                 className="form-input"
@@ -116,14 +116,7 @@ export function SettingsModal({
                 onChange={(e) => setTempModel(e.target.value)}
                 autoFocus
               />
-              <span
-                style={{
-                  fontSize: "0.75rem",
-                  color: "var(--text-secondary)",
-                  display: "block",
-                  marginTop: "var(--space-1)",
-                }}
-              >
+              <span className="select-hint">
                 Format: <code>provider:model-name</code>
               </span>
             </div>
@@ -141,16 +134,16 @@ export function SettingsModal({
           />
         </div>
 
-        <div className="form-group">
+<div className="form-group">
           <label className="form-label">Analytics Database URL</label>
           <input
             type="text"
             className="form-input"
             placeholder="postgresql://user:pass@host/db"
             value={tempDbUrl}
-            onChange={(e) => setTempDbUrl(e.target.value)}
+            onChange={(e) => setDbUrl(e.target.value)}
           />
-          <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+          <span className="select-hint">
             Leave blank to use the backend's default DB.
           </span>
         </div>

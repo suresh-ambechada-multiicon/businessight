@@ -65,42 +65,35 @@ export const ManagePromptsModal: React.FC<ManagePromptsModalProps> = ({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
-        className="modal-content"
+        className="modal-content modal-content-wide"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: "600px" }}
       >
         <div className="modal-header">
-          <h2><Command size={18} style={{ marginRight: "8px", verticalAlign: "text-bottom" }} /> Saved Prompts</h2>
+          <h2 className="modal-title-row">
+            <Command size={18} /> Saved Prompts
+          </h2>
           <button className="icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
         </div>
 
-        <div className="modal-body" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+        <div className="modal-body manage-prompts-body">
           {savedPrompts.length === 0 ? (
-            <div style={{ color: "var(--text-tertiary)", textAlign: "center", padding: "2rem" }}>
+            <div className="manage-prompts-empty">
               No saved prompts yet.
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div className="prompts-list">
               {savedPrompts.map(p => (
-                <div key={p.id} style={{ 
-                  background: "var(--bg-secondary)", 
-                  padding: "12px", 
-                  borderRadius: "8px",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "space-between"
-                }}>
-                  <div style={{ flex: 1, marginRight: "16px" }}>
+                <div key={p.id} className="prompt-item">
+                  <div className="prompt-item-content">
                     {editingId === p.id ? (
-                      <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                      <div className="prompt-edit-row">
                         <input
                           type="text"
                           value={editName}
                           onChange={(e) => setEditName(e.target.value)}
-                          className="settings-input"
-                          style={{ margin: 0, padding: "4px 8px" }}
+                          className="prompt-edit-input"
                           autoFocus
                           onKeyDown={(e) => e.key === "Enter" && handleSaveEdit(p.id)}
                         />
@@ -112,17 +105,17 @@ export const ManagePromptsModal: React.FC<ManagePromptsModalProps> = ({
                         </button>
                       </div>
                     ) : (
-                      <div style={{ fontWeight: 600, marginBottom: "4px" }}>{p.name}</div>
+                      <div className="prompt-item-name">{p.name}</div>
                     )}
 
                   </div>
-                  <div style={{ display: "flex", gap: "8px" }}>
+                  <div className="prompt-item-actions">
                     {editingId !== p.id && (
                       <>
                         <button className="icon-btn" onClick={() => handleStartEdit(p)} title="Rename">
                           <Edit2 size={16} />
                         </button>
-                        <button className="icon-btn" onClick={() => setDeleteId(p.id)} title="Delete" style={{ color: "var(--danger-color, #e53e3e)" }}>
+                        <button className="icon-btn icon-btn-danger" onClick={() => setDeleteId(p.id)} title="Delete">
                           <Trash2 size={16} />
                         </button>
                       </>

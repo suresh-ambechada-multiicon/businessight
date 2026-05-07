@@ -42,19 +42,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
           <FileText size={20} />
           Report Outline
         </div>
-        <div
-          className="sidebar-content"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flex: 1,
-            opacity: 0.5,
-            textAlign: "center",
-            fontSize: "0.875rem",
-            padding: "20px"
-          }}
-        >
+        <div className="sidebar-content right-sidebar-empty">
           No reports generated yet.
         </div>
       </div>
@@ -67,36 +55,15 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
         <FileText size={20} />
         Report Outline
       </div>
-      <div className="sidebar-content">
+      <div className="sidebar-content right-sidebar-content">
         <div className="chat-list">
           {reports.map((report: any, idx) => (
             <div
               key={report.id}
-              className="history-item"
-              style={{
-                flexDirection: "column",
-                alignItems: "flex-start",
-                padding: "8px 12px",
-                height: "auto",
-                whiteSpace: "normal",
-                cursor: "pointer",
-                overflow: "visible",
-                gap: "4px"
-              }}
+              className="history-item report-outline-item"
               onClick={() => scrollToInteraction(report.elementId)}
             >
-              <div
-                className="history-item-text"
-                style={{
-                  fontWeight: 600,
-                  width: "100%",
-                  whiteSpace: "normal",
-                  overflow: "visible",
-                  textOverflow: "clip",
-                  lineHeight: "1.4",
-                  fontSize: "0.85rem"
-                }}
-              >
+              <div className="history-item-text report-outline-title">
                 {idx + 1}. {report.title}
               </div>
             </div>

@@ -173,25 +173,9 @@ export const RawDataTable = memo(
               </button>
             )}
           </Header>
-          <div
-            className="raw-data-scroll"
-            style={{
-              minHeight: loading ? "100px" : "auto",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            {loading ? (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "2rem",
-                  gap: "10px",
-                  color: "var(--text-secondary)",
-                }}
-              >
+<div className={`raw-data-scroll ${loading ? 'raw-data-scroll-loading' : ''}`}>
+                {loading ? (
+              <div className="loading-state">
                 <Loader2 className="spinner" size={20} />
                 Loading historical data...
               </div>
@@ -252,7 +236,7 @@ export const RawDataTable = memo(
                 <tbody>
                   {filteredAndSortedData.slice(0, visibleRows).map((row, i) => (
                     <tr key={i}>
-                      <td style={{ opacity: 0.5, fontSize: "0.75rem" }}>
+                      <td className="row-number-cell">
                         {i + 1}
                       </td>
                       {columns.map((col) => (
@@ -265,25 +249,16 @@ export const RawDataTable = memo(
                 </tbody>
               </table>
             ) : (
-              <div style={{ padding: "1rem", textAlign: "center", opacity: 0.6 }}>
+              <div className="no-data-message">
                 No data available.
               </div>
             )}
             
             {filteredAndSortedData.length > visibleRows && (
-              <div style={{ padding: "1rem", display: "flex", justifyContent: "center" }}>
+              <div className="load-more-wrapper">
                 <button 
                   onClick={() => setVisibleRows(prev => prev + 100)}
-                  className="load-more-btn"
-                  style={{
-                    padding: "8px 16px",
-                    background: "var(--bg-tertiary)",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "var(--radius-md)",
-                    color: "var(--text-primary)",
-                    fontSize: "0.875rem",
-                    cursor: "pointer"
-                  }}
+                  className="load-more-btn-inline"
                 >
                   Load More ({filteredAndSortedData.length - visibleRows} remaining)
                 </button>

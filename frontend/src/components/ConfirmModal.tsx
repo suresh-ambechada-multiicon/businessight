@@ -81,50 +81,33 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onCancel} style={{ zIndex: 9999 }}>
+    <div className="modal-overlay modal-overlay-high" onClick={onCancel}>
       <div 
         ref={modalRef}
-        className="modal-content" 
+        className="modal-content modal-content-narrow" 
         onClick={(e) => e.stopPropagation()} 
-        style={{ maxWidth: "400px", padding: "20px" }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
       >
-        <h3 id="confirm-title" style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: "12px", color: "var(--text-primary)" }}>
+        <h3 id="confirm-title" className="confirm-modal-title">
           {title}
         </h3>
-        <p style={{ fontSize: "0.95rem", color: "var(--text-secondary)", marginBottom: "24px", lineHeight: 1.5 }}>
+        <p className="confirm-modal-message">
           {message}
         </p>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+        <div className="confirm-modal-actions">
           <button 
             ref={cancelRef}
             onClick={onCancel}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "6px",
-              background: "transparent",
-              border: "1px solid var(--border-color)",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-              outlineOffset: "2px"
-            }}
+            className="modal-btn"
           >
             {cancelText}
           </button>
           <button 
             ref={confirmRef}
             onClick={onConfirm}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "6px",
-              background: "var(--danger-color, #ef4444)",
-              border: "none",
-              color: "white",
-              cursor: "pointer",
-              outlineOffset: "2px"
-            }}
+            className="modal-btn modal-btn-danger"
           >
             {confirmText}
           </button>

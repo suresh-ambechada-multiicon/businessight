@@ -3,12 +3,17 @@
   --bg-primary: #ffffff;
   --bg-secondary: #f3f4f6;
   --bg-surface: #ffffff;
+  --bg-tertiary: #f9fafb;
   --text-primary: #111827;
   --text-secondary: #4b5563;
+  --text-tertiary: #9ca3af;
   --border-color: #e5e7eb;
-  --accent-color: #ef4444; /* Wireframe pink/red */
+  --accent-color: #ef4444;
   --accent-hover: #dc2626;
+  --accent-light: rgba(239, 68, 68, 0.1);
   --input-bg: #f9fafb;
+  --danger-color: #ef4444;
+  --success-color: #10b981;
 
   /* Spacing */
   --space-1: 0.25rem;
@@ -18,16 +23,29 @@
   --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
+  --space-10: 2.5rem;
   --space-12: 3rem;
 
   /* Radius */
   --radius-sm: 0.25rem;
   --radius-md: 0.375rem;
   --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
   --radius-full: 9999px;
 
   /* Transitions */
   --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+
+  /* Font */
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 0 0 100vmax rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 
 .dark {
@@ -35,12 +53,17 @@
   --bg-primary: #1e1e1e;
   --bg-secondary: #252526;
   --bg-surface: #2d2d30;
+  --bg-tertiary: #333333;
   --text-primary: #e5e5e5;
   --text-secondary: #a0a0a0;
+  --text-tertiary: #6b6b6b;
   --border-color: #3e3e42;
   --accent-color: #ff7b72;
   --accent-hover: #ff9892;
+  --accent-light: rgba(255, 123, 114, 0.1);
   --input-bg: #3c3c3c;
+  --danger-color: #f87171;
+  --success-color: #34d399;
 }
 
 * {

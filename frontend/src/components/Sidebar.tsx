@@ -48,11 +48,11 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-content">
-        <button className="new-chat-btn" onClick={onNewChat} style={{ marginBottom: "8px" }}>
+        <button className="new-chat-btn" onClick={onNewChat}>
           <PlusCircle size={18} />
           <span>New Chat</span>
         </button>
-        <button className="new-chat-btn" onClick={openManagePrompts} style={{ background: "transparent", color: "var(--text-secondary)", border: "1px solid var(--border-color)" }}>
+        <button className="new-chat-btn new-chat-btn-secondary" onClick={openManagePrompts}>
           <Command size={18} />
           <span>Saved Prompts</span>
         </button>
@@ -60,7 +60,7 @@ export function Sidebar({
         <h3 className="sidebar-title">Recent Chats</h3>
         <div className="chat-list">
           {sessions.length === 0 ? (
-            <div className="history-item" style={{ cursor: "default" }}>
+            <div className="history-item history-item-empty">
               No chats yet
             </div>
           ) : (
@@ -70,13 +70,8 @@ export function Sidebar({
                 className={`history-item ${session.id === currentSessionId ? "active" : ""}`}
               >
                 <span
-                  className="history-item-text"
+                  className="history-item-text history-item-text-full"
                   onClick={() => onSelectSession(session.id)}
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
                 >
                   {session.title}
                 </span>
@@ -87,7 +82,6 @@ export function Sidebar({
                     e.stopPropagation();
                     setDeleteSessionId(session.id);
                   }}
-                  style={{ opacity: 0.4, transition: "opacity 0.2s" }}
                 />
               </button>
             ))

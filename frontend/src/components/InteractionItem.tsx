@@ -17,7 +17,7 @@ import {
   Minimize2,
   Save,
   Command,
-  Code,
+  Code
 } from "lucide-react";
 import type { Interaction, SavedPrompt } from "../types";
 import { ReportDisplay } from "./ReportDisplay";
@@ -25,6 +25,7 @@ import { RawDataTable } from "./RawDataTable";
 import { ChartDisplay } from "./ChartDisplay";
 import { SavePromptModal } from "./SavePromptModal";
 import { formatTime } from "../utils/formatters";
+import "../App.css";
 
 interface InteractionItemProps {
   interaction: Interaction;
@@ -76,10 +77,10 @@ export const InteractionItem = memo(
         className="interaction-wrapper"
       >
         <div className="chat-message user-message">
-          <div className="message-content" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div className="message-content user-message-content">
             {interaction.saved_prompt_name ? (
               <>
-                <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                <div className="saved-prompt-label">
                   <Command size={12} /> Saved Prompt
                 </div>
                 <div>{interaction.saved_prompt_name}</div>
@@ -97,58 +98,24 @@ export const InteractionItem = memo(
 
               <div className="report-text markdown-content">
                 <ReportDisplay text={result.report} />
-                <div
-                  style={{
-                    marginTop: "10px",
-                    fontSize: "0.8rem",
-                    color: "var(--text-tertiary)",
-                    display: "flex",
-                    gap: "12px",
-                    flexWrap: "wrap",
-                  }}
-                >
+                <div className="report-meta">
                   {result.execution_time && result.execution_time > 0 && (
-                    <span
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "4px",
-                      }}
-                    >
+                    <span className="report-meta-item">
                       <Clock size={14} /> {formatTime(result.execution_time)}
                     </span>
                   )}
                   {result.execution_time && result.execution_time < 0 && (
-                    <span
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "4px",
-                        color: "var(--danger-color, #ef4444)",
-                      }}
-                    >
+                    <span className="report-meta-item interrupted">
                       <Clock size={14} /> Interrupted
                     </span>
                   )}
                   {interaction.usage && (
                     <>
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "4px",
-                        }}
-                      >
+                      <span className="report-meta-item">
                         <Download size={14} /> In:{" "}
                         {interaction.usage.input_tokens.toLocaleString()}
                       </span>
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "4px",
-                        }}
-                      >
+                      <span className="report-meta-item">
                         <Upload size={14} /> Out:{" "}
                         {interaction.usage.output_tokens.toLocaleString()}
                       </span>
@@ -158,17 +125,7 @@ export const InteractionItem = memo(
                     <button
                       onClick={handleSavePrompt}
                       title="Save as Prompt"
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: "var(--text-tertiary)",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "4px",
-                        padding: 0,
-                        marginLeft: "auto"
-                      }}
+                      className="save-prompt-btn"
                     >
                       <Save size={14} /> Save Prompt
                     </button>
@@ -291,9 +248,8 @@ export const InteractionItem = memo(
                 <details open className="thinking-accordion">
                   <summary className="thinking-header">
                     <Loader2
-                      className="spinner"
+                      className="spinner spinner-sm"
                       size={18}
-                      style={{ marginRight: "8px", minWidth: "18px" }}
                     />
                     <span className="status-label">
                       {interaction.status &&
@@ -341,14 +297,7 @@ const RunningTimer = () => {
     return () => clearInterval(interval);
   }, []);
   return (
-    <span
-      style={{
-        marginLeft: "auto",
-        fontSize: "0.8rem",
-        color: "var(--text-tertiary)",
-        opacity: 0.8,
-      }}
-    >
+    <span className="execution-timer">
       {formatTime(elapsed)}
     </span>
   );
