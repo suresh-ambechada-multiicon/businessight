@@ -189,6 +189,31 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         # ── 9. Stream Agent Execution ──────────────────────────────────
         result_holder = StreamResult()
         
+        # Check for simple query fast-path
+        from analytics.services.agent.tools import is_simple_query
+        from analytics.services.agent.report_generator import handle_simple_query
+        
+        if is_simple_query(payload.query):
+            send_status(ctx.task_id, "Processing simple query...")
+            yield {"event": "status", "data": {"message": "Processing simple query..."}}
+            
+            simple_result = handle_simple_query(db, payload.query, usable_tables)
+            if simple_result:
+                history_entry.report = simple_result["report"]
+                history_entry.raw_data = simple_result["raw_data"]
+                history_entry.sql_query = simple_result.get("sql_query", "")
+                history_entry.has_data = bool(simple_result.get("raw_data"))
+                history_entry.save()
+                
+                yield {"event": "result", "data": {
+                    "report": simple_result["report"],
+                    "chart_config": None,
+                    "raw_data": simple_result["raw_data"],
+                    "sql_query": simple_result.get("sql_query", ""),
+                    "done": True,
+                }}
+                return
+        
         if getattr(payload, "direct_sql", None):
             # Fast-path for Saved Prompts: execute SQL directly and summarize
             from langchain_core.messages import HumanMessage

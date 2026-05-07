@@ -54,12 +54,36 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
     # Signal liveness immediately
     redis_client.setex(heartbeat_key, 60, "alive")
 
+    def sanitize_chunk(chunk):
+        """Convert non-JSON-serializable objects to serializable format."""
+        from datetime import datetime, date, time
+        from decimal import Decimal
+        
+        def convert(obj):
+            if obj is None or isinstance(obj, (str, int, float, bool)):
+                return obj
+            if isinstance(obj, (bytes, memoryview)):
+                return "(binary data)"
+            if isinstance(obj, Decimal):
+                return float(obj)
+            # Check for datetime-like objects using hasattr for isoformat
+            if hasattr(obj, 'isoformat'):
+                return obj.isoformat()
+            if isinstance(obj, dict):
+                return {str(k): convert(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [convert(i) for i in obj]
+            return str(obj)
+        
+        return convert(chunk)
+
     try:
         for chunk in process_analytics_query(payload, ctx):
             # Refresh heartbeat on every chunk
             redis_client.setex(heartbeat_key, 60, "alive")
-            # Write to Redis Stream — use maxlen 500 to avoid dropping early events
-            redis_client.xadd(stream_key, {"data": json.dumps(chunk)}, maxlen=500)
+            # Sanitize chunk for JSON serialization and write to Redis Stream
+            sanitized = sanitize_chunk(chunk)
+            redis_client.xadd(stream_key, {"data": json.dumps(sanitized)}, maxlen=500)
 
         # Pipeline completed normally — write done sentinel
         _write_done(redis_client, stream_key, self.request.id)
