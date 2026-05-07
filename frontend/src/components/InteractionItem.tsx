@@ -151,7 +151,7 @@ export const InteractionItem = memo(
               {result.sql_query && result.sql_query !== "No SQL queries were executed." && (
                 <details className="sql-accordion">
                   <summary>
-                    <Code size={14} style={{ marginRight: "8px" }} />
+                    <Code size={12} className="sql-icon" />
                     View SQL
                   </summary>
                   <div className="sql-content-wrapper">
@@ -170,6 +170,12 @@ export const InteractionItem = memo(
 
               {result.chart_config && (
                 <div className={`chart-wrapper-premium ${isChartFullscreen ? 'fullscreen' : ''}`}>
+                  <div className="chart-body">
+                    <ChartDisplay
+                      type={currentChartType || "bar"}
+                      config={result.chart_config}
+                    />
+                  </div>
                   <div className="chart-toolbar">
                     {CHART_TYPES.map((btn) => (
                       <button
@@ -183,23 +189,17 @@ export const InteractionItem = memo(
                         }
                         title={btn.title}
                       >
-                        {React.createElement(btn.icon, { size: 14 })}
+                        {React.createElement(btn.icon, { size: 12 })}
                       </button>
                     ))}
-                    <div style={{ width: '1px', background: 'var(--border-color)', margin: '4px 0' }} />
+                    <div className="chart-divider" />
                     <button
                       className="chart-tool-btn"
                       onClick={() => setIsChartFullscreen(!isChartFullscreen)}
                       title={isChartFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
                     >
-                      {isChartFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                      {isChartFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                     </button>
-                  </div>
-                  <div className="chart-body">
-                    <ChartDisplay
-                      type={currentChartType || "bar"}
-                      config={result.chart_config}
-                    />
                   </div>
                 </div>
               )}

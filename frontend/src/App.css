@@ -467,9 +467,20 @@ details[open]>.raw-data-summary {
     padding: var(--space-2) var(--space-3);
     color: var(--text-primary);
     border-bottom: 1px solid var(--border-color);
-    max-width: 300px;
+    max-width: 400px;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: text;
+    user-select: all;
+}
+
+.raw-data-table td:hover {
+    background-color: var(--bg-secondary);
+}
+
+.raw-data-table td.title-cell {
+    cursor: help;
 }
 
 .raw-data-table tbody tr:hover {
@@ -603,54 +614,44 @@ details[open]>.raw-data-summary {
 
 .sql-accordion {
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    background-color: var(--bg-surface);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-secondary);
     overflow: hidden;
-    margin-bottom: var(--space-4);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.sql-accordion:hover {
-    border-color: var(--text-tertiary);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    margin-bottom: var(--space-3);
+    margin-top: var(--space-3);
 }
 
 .sql-accordion summary {
     list-style: none;
     outline: none;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-3);
     cursor: pointer;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
-    background-color: var(--bg-secondary);
-    font-weight: 600;
+    font-weight: 500;
     display: flex;
     align-items: center;
-    border-bottom: 1px solid transparent;
-    transition: all 0.2s ease;
+    gap: var(--space-2);
+    transition: color var(--transition-fast);
     user-select: none;
 }
 
 .sql-accordion summary:hover {
-    background-color: var(--bg-surface);
     color: var(--text-primary);
 }
 
 .sql-accordion summary::after {
     content: "";
-    width: 6px;
-    height: 6px;
-    border-right: 2px solid currentColor;
-    border-bottom: 2px solid currentColor;
+    width: 5px;
+    height: 5px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
     transform: rotate(-45deg);
     margin-left: auto;
-    transition: transform 0.3s ease;
+    transition: transform var(--transition-normal);
 }
 
 .sql-accordion[open] summary {
-    border-bottom-color: var(--border-color);
-    background-color: var(--bg-surface);
     color: var(--text-primary);
 }
 
@@ -663,19 +664,15 @@ details[open]>.raw-data-summary {
 }
 
 .sql-content-wrapper {
-    max-height: 300px;
+    max-height: 200px;
     overflow-y: auto;
-    padding: var(--space-4);
-    background-color: var(--bg-surface);
-    scrollbar-width: thin;
+    padding: var(--space-3);
+    background-color: var(--bg-primary);
+    border-top: 1px solid var(--border-color);
 }
 
-.sql-content-wrapper::-webkit-scrollbar {
-    width: 6px;
-}
-
-.sql-content-wrapper::-webkit-scrollbar-track {
-    background: transparent;
+.sql-icon {
+    opacity: 0.6;
 }
 
 .sql-content-wrapper::-webkit-scrollbar-thumb {
@@ -823,16 +820,16 @@ details[open]>.raw-data-summary {
 }
 
 .sql-code-block {
-    background-color: var(--bg-secondary);
-    padding: var(--space-4);
-    border-radius: var(--radius-md);
+    background-color: var(--bg-tertiary);
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
     overflow-x: auto;
     white-space: pre-wrap;
-    word-break: break-word;
+    word-break: break-all;
     font-family: var(--font-mono);
-    font-size: 0.875rem;
-    line-height: 1.5;
-    border: 1px solid var(--border-color);
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--text-secondary);
 }
 
 .input-area {
@@ -1087,11 +1084,17 @@ details[open]>.raw-data-summary {
     }
 }
 
-/* Integrated Chart Wrapper & Toolbar */
+/* Chart Wrapper */
 .chart-wrapper-premium {
-    margin-top: 16px;
+    margin-top: var(--space-3);
+    margin-bottom: var(--space-3);
     position: relative;
     width: 100%;
+}
+
+.chart-body {
+    width: 100%;
+    min-height: 280px;
 }
 
 .chart-wrapper-premium.fullscreen {
@@ -1107,7 +1110,7 @@ details[open]>.raw-data-summary {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--shadow-xl);
     display: flex;
     flex-direction: column;
 }
@@ -1125,9 +1128,9 @@ details[open]>.raw-data-summary {
     width: 100%;
 }
 
-/* Recharts Professional Styling */
+/* Recharts Styling */
 .recharts-legend-item-text {
-    font-size: 11px !important;
+    font-size: 10px !important;
     color: var(--text-secondary) !important;
     font-weight: 500;
 }
@@ -1136,76 +1139,81 @@ details[open]>.raw-data-summary {
     display: flex !important;
     justify-content: center !important;
     flex-wrap: wrap !important;
-    gap: 12px !important;
+    gap: var(--space-2) !important;
+    margin-top: var(--space-2) !important;
 }
 
 .recharts-tooltip-wrapper {
     outline: none;
 }
 
-/* New Chart UI Classes */
-.chart-container-premium {
-    width: 100%;
-}
-
 .chart-axis-label {
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    opacity: 0.6;
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+    font-size: 10px;
 }
 
 .chart-legend-wrapper {
-    padding-top: 30px;
-    max-height: 100px;
+    padding-top: var(--space-2);
+    max-height: 80px;
     overflow-y: auto;
 }
 
+/* Chart Toolbar */
 .chart-toolbar {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
-    margin-top: 12px;
-    opacity: 0.8;
-    transition: opacity 0.2s ease;
-    padding: 0 4px;
-}
-
-.chart-wrapper-premium:hover .chart-toolbar {
-    opacity: 1;
+    align-items: center;
+    gap: var(--space-1);
+    margin-top: var(--space-3);
+    padding-top: var(--space-2);
 }
 
 .chart-tool-btn {
-    width: 32px;
-    height: 32px;
+    width: 26px;
+    height: 26px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     border: 1px solid transparent;
     background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    color: var(--text-tertiary);
+    cursor: pointer !important;
+    transition: all var(--transition-fast);
+    padding: 0;
+    outline: none;
+}
+
+.chart-tool-btn::-moz-focus-inner {
+    border: 0;
+    padding: 0;
+}
+
+.chart-tool-btn * {
+    pointer-events: none;
 }
 
 .chart-tool-btn:hover {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    border-color: var(--border-color);
-    transform: translateY(-1px);
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+    cursor: pointer !important;
 }
 
 .chart-tool-btn.active {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.2);
-    color: #3b82f6;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+    background: var(--accent-light);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
 }
 
-.chart-container-inner {
-    width: 100%;
-    height: 350px;
+.chart-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--border-color);
+    margin: 0 var(--space-1);
 }
 
 /* Saved Prompts Menu */

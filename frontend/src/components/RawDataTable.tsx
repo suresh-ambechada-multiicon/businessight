@@ -240,7 +240,7 @@ export const RawDataTable = memo(
                         {i + 1}
                       </td>
                       {columns.map((col) => (
-                        <td key={col}>
+                        <td key={col} title={row[col] != null ? String(row[col]) : ""}>
                           {row[col] != null ? String(row[col]) : "—"}
                         </td>
                       ))}

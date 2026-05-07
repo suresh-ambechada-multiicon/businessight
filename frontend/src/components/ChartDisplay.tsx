@@ -109,7 +109,7 @@ export const ChartDisplay = memo(({ type, config }: ChartDisplayProps) => {
     top: 10,
     right: 20,
     left: 60,
-    bottom: (isLargeDataset || hasLongLabels) ? 80 : 40
+    bottom: (isLargeDataset || hasLongLabels) ? 90 : 60
   };
 
   const xAxisLabel = (
