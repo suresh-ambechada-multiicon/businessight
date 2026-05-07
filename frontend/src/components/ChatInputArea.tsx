@@ -1,4 +1,4 @@
-import { useState, memo, useRef, useEffect } from "react";
+import { useState, memo, useRef, useEffect, useMemo, useCallback } from "react";
 import { ArrowUp, Square, Command } from "lucide-react";
 import type { SavedPrompt } from "../types";
 
@@ -10,54 +10,31 @@ interface ChatInputAreaProps {
   savedPrompts: SavedPrompt[];
 }
 
-export const ChatInputArea = memo(({ onQuery, onStop, isLoading, isInitial, savedPrompts }: ChatInputAreaProps) => {
+export const ChatInputArea = memo(function ChatInputArea({ onQuery, onStop, isLoading, isInitial, savedPrompts }: ChatInputAreaProps) {
   const [input, setInput] = useState("");
   const [showPromptsMenu, setShowPromptsMenu] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Filter prompts based on search after the slash
-  const filteredPrompts = savedPrompts.filter(p => 
-    input.startsWith("/") ? p.name.toLowerCase().includes(input.slice(1).toLowerCase()) : false
-  );
+  const filteredPrompts = useMemo(() => {
+    if (!input.startsWith("/")) return [];
+    const search = input.slice(1).toLowerCase();
+    return savedPrompts.filter(p => p.name.toLowerCase().includes(search));
+  }, [input, savedPrompts]);
 
   useEffect(() => {
-    if (input.startsWith("/")) {
-      setShowPromptsMenu(true);
-      setSelectedIndex(0);
-    } else {
-      setShowPromptsMenu(false);
-    }
-  }, [input]);
+    setShowPromptsMenu(input.startsWith("/") && filteredPrompts.length > 0);
+    setSelectedIndex(0);
+  }, [input, filteredPrompts.length]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (showPromptsMenu && filteredPrompts.length > 0) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSelectedIndex(prev => (prev < filteredPrompts.length - 1 ? prev + 1 : prev));
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSelectedIndex(prev => (prev > 0 ? prev - 1 : 0));
-      } else if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        const selected = filteredPrompts[selectedIndex];
-        onQuery(selected.query, selected.sql_command, selected.name);
-        setInput("");
-        setShowPromptsMenu(false);
-      } else if (e.key === "Escape") {
-        setShowPromptsMenu(false);
-      }
-    }
-  };
-
-  const handleSelectPrompt = (prompt: SavedPrompt) => {
+  const handleSelectPrompt = useCallback((prompt: SavedPrompt) => {
     onQuery(prompt.query, prompt.sql_command, prompt.name);
     setInput("");
     setShowPromptsMenu(false);
     inputRef.current?.focus();
-  };
+  }, [onQuery]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) {
       onStop();
@@ -65,7 +42,32 @@ export const ChatInputArea = memo(({ onQuery, onStop, isLoading, isInitial, save
       onQuery(input);
       setInput("");
     }
-  };
+  }, [isLoading, onStop, onQuery, input]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!showPromptsMenu || filteredPrompts.length === 0) return;
+    
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setSelectedIndex(prev => Math.min(prev + 1, filteredPrompts.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setSelectedIndex(prev => Math.max(prev - 1, 0));
+        break;
+      case "Enter":
+      case "Tab":
+        e.preventDefault();
+        handleSelectPrompt(filteredPrompts[selectedIndex]);
+        break;
+      case "Escape":
+        setShowPromptsMenu(false);
+        break;
+    }
+  }, [showPromptsMenu, filteredPrompts, selectedIndex, handleSelectPrompt]);
+
+  const isActive = input.trim().length > 0 || isLoading;
 
   return (
     <div className={`input-area ${isInitial ? "input-area-initial" : "input-area-active"}`}>
@@ -101,8 +103,8 @@ export const ChatInputArea = memo(({ onQuery, onStop, isLoading, isInitial, save
           />
           <button
             type="submit"
-            className={`submit-btn ${input.trim() || isLoading ? "active" : ""}`}
-            disabled={!input.trim() && !isLoading}
+            className={`submit-btn ${isActive ? "active" : ""}`}
+            disabled={!isActive}
           >
             {isLoading ? (
               <Square size={16} fill="currentColor" />

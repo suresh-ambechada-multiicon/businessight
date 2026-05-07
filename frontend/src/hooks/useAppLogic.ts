@@ -10,10 +10,10 @@ export const useAppLogic = () => {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [savedPrompts, setSavedPrompts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  
   const abortControllerRef = useRef<AbortController | null>(null);
   const loadedSessionsRef = useRef<Set<string>>(new Set());
 
-  // Sync session to localStorage
   useEffect(() => {
     localStorage.setItem("currentSessionId", currentSessionId);
   }, [currentSessionId]);
@@ -165,33 +165,38 @@ export const useAppLogic = () => {
     return () => clearInterval(interval);
   }, [currentSessionId]); // Only re-create interval when session changes
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     const newId = Date.now().toString();
     setCurrentSessionId(newId);
     setSessions((prev) => [
       { id: newId, title: "New Chat...", count: 0, last_activity: "" },
       ...prev,
     ]);
-  };
+  }, []);
 
-  const handleDeleteSession = async (sessionId: string) => {
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
     try {
       await api.deleteSession(sessionId);
       setInteractions((prev) =>
-        prev.filter((i) => i.session_id !== sessionId),
+        prev.filter((i) => (i as any).session_id !== sessionId),
       );
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       loadedSessionsRef.current.delete(sessionId);
       if (currentSessionId === sessionId) {
-        handleNewChat();
+        const newId = Date.now().toString();
+        setCurrentSessionId(newId);
+        setSessions((prev) => [
+          { id: newId, title: "New Chat...", count: 0, last_activity: "" },
+          ...prev,
+        ]);
       }
     } catch (error) {
       console.error("Failed to delete session", error);
       alert("Failed to delete session.");
     }
-  };
+  }, [currentSessionId]);
 
-  const handleStop = () => {
+  const handleStop = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
@@ -203,30 +208,21 @@ export const useAppLogic = () => {
       );
     setIsLoading(false);
 
-    // Find the last incomplete interaction in the CURRENT session (not globally)
     setInteractions((prev) => {
       if (prev.length === 0) return prev;
-
-      // Walk backwards to find the last incomplete item for this session
       const lastIdx = prev.findLastIndex(
         (i) =>
-          (i.session_id || "default") === currentSessionId &&
+          ((i as any).session_id || "default") === currentSessionId &&
           !i.result
       );
-
       if (lastIdx === -1) return prev;
-
       return prev.map((i, idx) =>
         idx === lastIdx
-          ? {
-              ...i,
-              status: "Analysis stopped.",
-              result: { report: "_Analysis cancelled by user._" },
-            }
+          ? { ...i, status: "Analysis stopped.", result: { report: "_Analysis cancelled by user._" } }
           : i,
       );
     });
-  };
+  }, [currentSessionId]);
 
   const handleQuery = async (
     query: string,

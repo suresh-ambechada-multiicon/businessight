@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback, memo } from "react";
 import { ChevronUp } from "lucide-react";
 import type { Interaction, SavedPrompt } from "../types";
 import { InteractionItem } from "./InteractionItem";
@@ -15,7 +15,7 @@ interface MainContentProps {
   setSavedPrompts: React.Dispatch<React.SetStateAction<SavedPrompt[]>>;
 }
 
-export const MainContent: React.FC<MainContentProps> = ({
+export const MainContent = memo(function MainContent({
   onQuery,
   onStop,
   isLoading,
@@ -23,10 +23,8 @@ export const MainContent: React.FC<MainContentProps> = ({
   theme,
   savedPrompts,
   setSavedPrompts,
-}) => {
-  const [chartOverrides, setChartOverrides] = useState<Record<number, string>>(
-    {},
-  );
+}: MainContentProps) {
+  const [chartOverrides, setChartOverrides] = useState<Record<number, string>>({});
   const [visibleCount, setVisibleCount] = useState(30);
 
   const paginatedInteractions = useMemo(() => {
@@ -36,6 +34,12 @@ export const MainContent: React.FC<MainContentProps> = ({
   const messagesEndRef = useChatScroll(interactions.length, isLoading, visibleCount);
 
   const isInitial = interactions.length === 0 && !isLoading;
+
+  const handleLoadMore = useCallback(() => {
+    setVisibleCount(prev => prev + 50);
+  }, []);
+
+  const startIdx = interactions.length - visibleCount;
 
   return (
     <main className="main-content">
@@ -50,29 +54,25 @@ export const MainContent: React.FC<MainContentProps> = ({
               <div className="load-more-container">
                 <button
                   className="load-more-btn load-more-btn-inline"
-                  onClick={() => setVisibleCount((prev) => prev + 50)}
+                  onClick={handleLoadMore}
                 >
                   <ChevronUp size={14} />
                   Load previous messages
                 </button>
               </div>
             )}
-            {paginatedInteractions.map((interaction, mapIdx) => {
-              // Compute the index within the full interactions array
-              const fullIdx = interactions.length - paginatedInteractions.length + mapIdx;
-              return (
-                <InteractionItem
-                  key={interaction.id || `int-${fullIdx}`}
-                  interaction={interaction}
-                  idx={fullIdx}
-                  chartOverrides={chartOverrides}
-                  setChartOverrides={setChartOverrides}
-                  theme={theme}
-                  savedPrompts={savedPrompts}
-                  setSavedPrompts={setSavedPrompts}
-                />
-              );
-            })}
+            {paginatedInteractions.map((interaction, mapIdx) => (
+              <InteractionItem
+                key={interaction.id || `int-${startIdx + mapIdx}`}
+                interaction={interaction}
+                idx={startIdx + mapIdx}
+                chartOverrides={chartOverrides}
+                setChartOverrides={setChartOverrides}
+                theme={theme}
+                savedPrompts={savedPrompts}
+                setSavedPrompts={setSavedPrompts}
+              />
+            ))}
             <div ref={messagesEndRef} />
             <div className="spacer" />
           </div>
@@ -88,4 +88,4 @@ export const MainContent: React.FC<MainContentProps> = ({
       />
     </main>
   );
-};
+});

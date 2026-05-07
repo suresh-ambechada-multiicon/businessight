@@ -1,4 +1,4 @@
-import React, { useState, useEffect, memo } from "react";
+import React, { useState, useEffect, memo, lazy } from "react";
 import {
   Loader2,
   BarChart3 as BarChartIcon,
@@ -17,15 +17,30 @@ import {
   Minimize2,
   Save,
   Command,
-  Code
+  Code,
 } from "lucide-react";
 import type { Interaction, SavedPrompt } from "../types";
 import { ReportDisplay } from "./ReportDisplay";
 import { RawDataTable } from "./RawDataTable";
 import { ChartDisplay } from "./ChartDisplay";
-import { SavePromptModal } from "./SavePromptModal";
+import { Timer } from "./Timer";
 import { formatTime } from "../utils/formatters";
 import "../App.css";
+
+const SavePromptModal = lazy(() => import("./SavePromptModal").then(m => ({ default: m.SavePromptModal })));
+
+const CHART_TYPES = [
+  { type: "bar", icon: BarChartIcon, title: "Bar Chart" },
+  { type: "stacked-bar", icon: StackedIcon, title: "Stacked Bar" },
+  { type: "line", icon: LineChartIcon, title: "Line Chart" },
+  { type: "area", icon: AreaChartIcon, title: "Area Chart" },
+  { type: "stacked-area", icon: StackedIcon, title: "Stacked Area" },
+  { type: "pie", icon: PieChartIcon, title: "Pie Chart" },
+  { type: "radar", icon: RadarIcon, title: "Radar Chart" },
+  { type: "composed", icon: ComposedIcon, title: "Composed (Line+Bar)" },
+  { type: "radial", icon: RadialIcon, title: "Radial Chart" },
+  { type: "scatter", icon: ScatterIcon, title: "Scatter Chart" },
+];
 
 interface InteractionItemProps {
   interaction: Interaction;
@@ -156,58 +171,7 @@ export const InteractionItem = memo(
               {result.chart_config && (
                 <div className={`chart-wrapper-premium ${isChartFullscreen ? 'fullscreen' : ''}`}>
                   <div className="chart-toolbar">
-                    {[
-                      {
-                        type: "bar",
-                        icon: <BarChartIcon size={14} />,
-                        title: "Bar Chart",
-                      },
-                      {
-                        type: "stacked-bar",
-                        icon: <StackedIcon size={14} />,
-                        title: "Stacked Bar",
-                      },
-                      {
-                        type: "line",
-                        icon: <LineChartIcon size={14} />,
-                        title: "Line Chart",
-                      },
-                      {
-                        type: "area",
-                        icon: <AreaChartIcon size={14} />,
-                        title: "Area Chart",
-                      },
-                      {
-                        type: "stacked-area",
-                        icon: <StackedIcon size={14} />,
-                        title: "Stacked Area",
-                      },
-                      {
-                        type: "pie",
-                        icon: <PieChartIcon size={14} />,
-                        title: "Pie Chart",
-                      },
-                      {
-                        type: "radar",
-                        icon: <RadarIcon size={14} />,
-                        title: "Radar Chart",
-                      },
-                      {
-                        type: "composed",
-                        icon: <ComposedIcon size={14} />,
-                        title: "Composed (Line+Bar)",
-                      },
-                      {
-                        type: "radial",
-                        icon: <RadialIcon size={14} />,
-                        title: "Radial Chart",
-                      },
-                      {
-                        type: "scatter",
-                        icon: <ScatterIcon size={14} />,
-                        title: "Scatter Chart",
-                      },
-                    ].map((btn) => (
+                    {CHART_TYPES.map((btn) => (
                       <button
                         key={btn.type}
                         className={`chart-tool-btn ${currentChartType === btn.type ? "active" : ""}`}
@@ -219,7 +183,7 @@ export const InteractionItem = memo(
                         }
                         title={btn.title}
                       >
-                        {btn.icon}
+                        {React.createElement(btn.icon, { size: 14 })}
                       </button>
                     ))}
                     <div style={{ width: '1px', background: 'var(--border-color)', margin: '4px 0' }} />
@@ -257,7 +221,7 @@ export const InteractionItem = memo(
                         ? "Generating insights from database..."
                         : interaction.status || "Analyzing..."}
                     </span>
-                    <RunningTimer />
+                    <Timer className="execution-timer" />
                   </summary>
                   {interaction.status &&
                     interaction.status.startsWith("SQL:") && (
@@ -272,33 +236,18 @@ export const InteractionItem = memo(
         )}
 
         {isSaveModalOpen && result?.sql_query && (
-          <SavePromptModal
-            isOpen={isSaveModalOpen}
-            onClose={() => setIsSaveModalOpen(false)}
-            defaultName={interaction.query.slice(0, 50)}
-            query={interaction.query}
-            sqlCommand={result.sql_query}
-            setSavedPrompts={setSavedPrompts}
-          />
+          <React.Suspense fallback={null}>
+            <SavePromptModal
+              isOpen={isSaveModalOpen}
+              onClose={() => setIsSaveModalOpen(false)}
+              defaultName={interaction.query.slice(0, 50)}
+              query={interaction.query}
+              sqlCommand={result.sql_query}
+              setSavedPrompts={setSavedPrompts}
+            />
+          </React.Suspense>
         )}
       </div>
     );
   },
 );
-
-const RunningTimer = () => {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const start = Date.now();
-    const interval = setInterval(
-      () => setElapsed((Date.now() - start) / 1000),
-      100,
-    );
-    return () => clearInterval(interval);
-  }, []);
-  return (
-    <span className="execution-timer">
-      {formatTime(elapsed)}
-    </span>
-  );
-};
