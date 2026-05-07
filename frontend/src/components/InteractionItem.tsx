@@ -1,6 +1,5 @@
 import React, { useState, useEffect, memo } from "react";
 import {
-  Database,
   Loader2,
   BarChart3 as BarChartIcon,
   LineChart as LineChartIcon,
@@ -16,16 +15,15 @@ import {
   Upload,
   Maximize2,
   Minimize2,
+  Save,
+  Command,
+  Code,
 } from "lucide-react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import {
-  oneDark,
-  oneLight,
-} from "react-syntax-highlighter/dist/esm/styles/prism";
-import type { Interaction } from "../types";
+import type { Interaction, SavedPrompt } from "../types";
 import { ReportDisplay } from "./ReportDisplay";
 import { RawDataTable } from "./RawDataTable";
 import { ChartDisplay } from "./ChartDisplay";
+import { SavePromptModal } from "./SavePromptModal";
 import { formatTime } from "../utils/formatters";
 
 interface InteractionItemProps {
@@ -36,6 +34,8 @@ interface InteractionItemProps {
     React.SetStateAction<Record<number, string>>
   >;
   theme: "light" | "dark";
+  savedPrompts?: SavedPrompt[];
+  setSavedPrompts?: React.Dispatch<React.SetStateAction<SavedPrompt[]>>;
 }
 
 export const InteractionItem = memo(
@@ -44,11 +44,12 @@ export const InteractionItem = memo(
     idx,
     chartOverrides,
     setChartOverrides,
-    theme,
+    setSavedPrompts,
   }: InteractionItemProps) => {
     const result = interaction.result;
     const currentChartType = chartOverrides[idx] || result?.chart_config?.type;
     const [isChartFullscreen, setIsChartFullscreen] = useState(false);
+    const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 
     // Handle Escape key to close fullscreen chart
     useEffect(() => {
@@ -61,11 +62,13 @@ export const InteractionItem = memo(
       if (isChartFullscreen) {
         window.addEventListener("keydown", handleKeyDown);
       }
-
-      return () => {
-        window.removeEventListener("keydown", handleKeyDown);
-      };
+      return () => window.removeEventListener("keydown", handleKeyDown);
     }, [isChartFullscreen]);
+
+    const handleSavePrompt = () => {
+      if (!result?.sql_query) return;
+      setIsSaveModalOpen(true);
+    };
 
     return (
       <div
@@ -73,136 +76,24 @@ export const InteractionItem = memo(
         className="interaction-wrapper"
       >
         <div className="chat-message user-message">
-          <div className="message-content">{interaction.query}</div>
+          <div className="message-content" style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            {interaction.saved_prompt_name ? (
+              <>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                  <Command size={12} /> Saved Prompt
+                </div>
+                <div>{interaction.saved_prompt_name}</div>
+              </>
+            ) : (
+              interaction.query
+            )}
+          </div>
         </div>
 
-        {result ? (
+        {result && result.report && result.report !== "Analyzing..." ? (
           <div className="chat-message ai-message">
             <div className="message-content">
-              {result.sql_query &&
-                !result.sql_query
-                  .toLowerCase()
-                  .includes("no sql queries were executed") && (
-                  <details className="sql-accordion">
-                    <summary>
-                      <Database
-                        size={16}
-                        style={{ marginRight: "8px", opacity: 0.7 }}
-                      />
-                      View Executed SQL
-                    </summary>
-                    <div className="sql-content-wrapper">
-                      {result.sql_query
-                        .split(/(?=-- Query \d+)/)
-                        .map((queryPart, index) => {
-                          const trimmed = queryPart.trim();
-                          if (!trimmed) return null;
 
-                          // Try to separate the "-- Query X" header from the actual SQL
-                          const match = trimmed.match(
-                            /^(-- Query \d+(?: \([^)]+\))?)\s*\n([\s\S]*)$/,
-                          );
-
-                          if (match) {
-                            const header = match[1];
-                            const sql = match[2].trim();
-                            return (
-                              <div
-                                key={index}
-                                className="sql-query-block"
-                                style={{ marginBottom: "1rem" }}
-                              >
-                                <div
-                                  className="sql-query-header"
-                                  style={{
-                                    color: "var(--text-tertiary)",
-                                    fontSize: "0.85rem",
-                                    marginBottom: "8px",
-                                    fontFamily: "var(--font-mono)",
-                                  }}
-                                >
-                                  {header}
-                                </div>
-                                <div
-                                  className="sql-query-code"
-                                  style={{
-                                    backgroundColor:
-                                      theme === "dark"
-                                        ? "rgba(255,255,255,0.05)"
-                                        : "rgba(0,0,0,0.03)",
-                                    padding: "12px",
-                                    borderRadius: "6px",
-                                  }}
-                                >
-                                  <SyntaxHighlighter
-                                    children={sql}
-                                    style={
-                                      theme === "dark" ? oneDark : oneLight
-                                    }
-                                    language="sql"
-                                    PreTag="div"
-                                    wrapLines={true}
-                                    lineProps={{
-                                      style: {
-                                        whiteSpace: "pre-wrap",
-                                        wordBreak: "break-word",
-                                      },
-                                    }}
-                                    customStyle={{
-                                      margin: 0,
-                                      padding: 0,
-                                      background: "transparent",
-                                      fontSize: "0.875rem",
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          return (
-                            <div
-                              key={index}
-                              className="sql-query-block"
-                              style={{ marginBottom: "1rem" }}
-                            >
-                              <div
-                                className="sql-query-code"
-                                style={{
-                                  backgroundColor:
-                                    theme === "dark"
-                                      ? "rgba(255,255,255,0.05)"
-                                      : "rgba(0,0,0,0.03)",
-                                  padding: "12px",
-                                  borderRadius: "6px",
-                                }}
-                              >
-                                <SyntaxHighlighter
-                                  children={trimmed}
-                                  style={theme === "dark" ? oneDark : oneLight}
-                                  language="sql"
-                                  PreTag="div"
-                                  wrapLines={true}
-                                  lineProps={{
-                                    style: {
-                                      whiteSpace: "pre-wrap",
-                                      wordBreak: "break-word",
-                                    },
-                                  }}
-                                  customStyle={{
-                                    margin: 0,
-                                    padding: 0,
-                                    background: "transparent",
-                                    fontSize: "0.875rem",
-                                  }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  </details>
-                )}
 
               <div className="report-text markdown-content">
                 <ReportDisplay text={result.report} />
@@ -216,7 +107,7 @@ export const InteractionItem = memo(
                     flexWrap: "wrap",
                   }}
                 >
-                  {result.execution_time && (
+                  {result.execution_time && result.execution_time > 0 && (
                     <span
                       style={{
                         display: "flex",
@@ -225,6 +116,18 @@ export const InteractionItem = memo(
                       }}
                     >
                       <Clock size={14} /> {formatTime(result.execution_time)}
+                    </span>
+                  )}
+                  {result.execution_time && result.execution_time < 0 && (
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        color: "var(--danger-color, #ef4444)",
+                      }}
+                    >
+                      <Clock size={14} /> Interrupted
                     </span>
                   )}
                   {interaction.usage && (
@@ -251,8 +154,39 @@ export const InteractionItem = memo(
                       </span>
                     </>
                   )}
+                  {result.sql_query && (
+                    <button
+                      onClick={handleSavePrompt}
+                      title="Save as Prompt"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "var(--text-tertiary)",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        padding: 0,
+                        marginLeft: "auto"
+                      }}
+                    >
+                      <Save size={14} /> Save Prompt
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {result.sql_query && result.sql_query !== "No SQL queries were executed." && (
+                <details className="sql-accordion">
+                  <summary>
+                    <Code size={14} style={{ marginRight: "8px" }} />
+                    View SQL
+                  </summary>
+                  <div className="sql-content-wrapper">
+                    <pre className="sql-code-block">{result.sql_query}</pre>
+                  </div>
+                </details>
+              )}
 
               {(result.raw_data?.length || 0) > 0 || result.has_data ? (
                 <RawDataTable
@@ -363,7 +297,7 @@ export const InteractionItem = memo(
                     />
                     <span className="status-label">
                       {interaction.status &&
-                      interaction.status.startsWith("SQL:")
+                        interaction.status.startsWith("SQL:")
                         ? "Generating insights from database..."
                         : interaction.status || "Analyzing..."}
                     </span>
@@ -379,6 +313,17 @@ export const InteractionItem = memo(
               </div>
             </div>
           </div>
+        )}
+
+        {isSaveModalOpen && result?.sql_query && (
+          <SavePromptModal
+            isOpen={isSaveModalOpen}
+            onClose={() => setIsSaveModalOpen(false)}
+            defaultName={interaction.query.slice(0, 50)}
+            query={interaction.query}
+            sqlCommand={result.sql_query}
+            setSavedPrompts={setSavedPrompts}
+          />
         )}
       </div>
     );

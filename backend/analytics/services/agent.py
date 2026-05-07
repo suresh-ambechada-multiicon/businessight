@@ -221,10 +221,13 @@ def init_llm(model: str, api_key: str, llm_config, ctx=None):
 def build_messages(session_id: str, query: str) -> list[dict]:
     """
     Build the message history for the agent, including the last 3 session
-    interactions as context.
+    interactions as context. Excludes in-flight queries (report='Analyzing...')
+    and failed fallback reports.
     """
     past_interactions = list(
-        QueryHistory.objects.filter(session_id=session_id).order_by("-created_at")[:3]
+        QueryHistory.objects.filter(session_id=session_id)
+        .exclude(report="Analyzing...")  # Exclude current in-flight query
+        .order_by("-created_at")[:3]
     )
     past_interactions.reverse()
 
@@ -278,7 +281,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
         for msg, metadata in agent.stream(
             {"messages": messages},
             stream_mode="messages",
-            config={"recursion_limit": 250},  # Effectively removed limit
+            config={"recursion_limit": 50},  # Reasonable limit; SQL tool has its own 5-query cap
         ):
             # Check for cancellation signal
             if cache.get(f"cancel_{session_id}"):
@@ -396,26 +399,34 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
         )
         return
     except Exception as e:
-        result_holder.has_error = True
         err_msg = str(e)
-        if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
-            err_msg = "Your requests are exhausted. Please check your plan or try again later."
-        
-        logger.error(
-            "Stream loop error",
-            exc_info=True,
-            extra={
-                "data": {
-                    **_ctx,
-                    "error": str(e),
-                    "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
-                }
-            },
-        )
-        yield {
-            "event": "error",
-            "data": {"message": f"Error: {err_msg}"},
-        }
+        # LangGraph recursion limit hit: gracefully fall through with whatever we have
+        if "GraphRecursionError" in type(e).__name__ or "recursion limit" in err_msg.lower():
+            logger.warning(
+                "Agent hit recursion limit, using accumulated results",
+                extra={"data": {**_ctx, "elapsed_ms": round((time.time() - stream_start) * 1000, 2)}},
+            )
+            # Don't set has_error — we have good data, just too many steps
+        else:
+            result_holder.has_error = True
+            if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
+                err_msg = "Your requests are exhausted. Please check your plan or try again later."
+            
+            logger.error(
+                "Stream loop error",
+                exc_info=True,
+                extra={
+                    "data": {
+                        **_ctx,
+                        "error": str(e),
+                        "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
+                    }
+                },
+            )
+            yield {
+                "event": "error",
+                "data": {"message": f"Error: {err_msg}"},
+            }
 
     stream_elapsed = round((time.time() - stream_start) * 1000, 2)
     logger.info(
@@ -690,14 +701,7 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
         return None
 
     # Detect if data is aggregated vs individual records
-    # Aggregated data: few rows (<= 30), labels are mostly unique categories
-    # Individual records: many rows (> 30), labels have many unique values
     num_rows = len(raw_data)
-
-    # For large datasets (>30 rows), this is likely raw list data — skip auto-chart
-    # Unless user explicitly asked for a chart
-    if num_rows > 30 and not is_explicit_request:
-        return None
 
     try:
         all_keys = list(raw_data[0].keys())
@@ -713,14 +717,6 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
                 break
         if not label_key:
             label_key = next((k for k in all_keys if not _is_id_or_key_column(k)), all_keys[0])
-
-        # Check if labels are mostly unique (= individual records, not aggregated)
-        label_values = [str(row.get(label_key, "")) for row in raw_data]
-        unique_ratio = len(set(label_values)) / len(label_values) if label_values else 0
-
-        # If > 70% of labels are unique AND > 10 rows, it's individual records — skip
-        if unique_ratio > 0.7 and num_rows > 10 and not is_explicit_request:
-            return None
 
         # Find chartable numeric columns
         value_keys = []
@@ -738,10 +734,20 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
         if not value_keys:
             return None
 
-        labels = label_values[:30]
+        # Aggregate data: sum numeric values for duplicate labels
+        from collections import OrderedDict
+        agg: dict[str, dict[str, float]] = OrderedDict()
+        for row in raw_data:
+            lbl = str(row.get(label_key, ""))
+            if lbl not in agg:
+                agg[lbl] = {vk: 0.0 for vk in value_keys}
+            for vk in value_keys:
+                agg[lbl][vk] += float(row.get(vk, 0) or 0)
+
+        labels = list(agg.keys())[:30]
         datasets = []
         for vk in value_keys[:5]:
-            data_points = [float(row.get(vk, 0) or 0) for row in raw_data[:30]]
+            data_points = [agg[lbl][vk] for lbl in labels]
             if len(set(data_points)) > 1:
                 datasets.append({
                     "label": vk.replace("_", " ").title(),

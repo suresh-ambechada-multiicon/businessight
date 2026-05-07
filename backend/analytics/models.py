@@ -26,6 +26,20 @@ class QueryHistory(models.Model):
     has_data = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)
+    task_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["created_at"]
+
+
+class SavedPrompt(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    query = models.TextField()
+    sql_command = models.TextField(unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        ordering = ["-created_at"]

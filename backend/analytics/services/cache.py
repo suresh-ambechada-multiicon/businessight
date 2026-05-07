@@ -2,23 +2,29 @@
 Caching and connection pooling for database operations.
 
 Uses Redis (via Django cache) for schema caching and provides
-a thread-safe engine pool to avoid creating new SQLAlchemy engines per request.
+a thread-safe engine pool with bounded size to avoid creating
+new SQLAlchemy engines per request.
 """
 
 import hashlib
 import threading
+import time
+from typing import Any
 
 from django.core.cache import cache
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 
 from analytics.services.logger import get_logger
 
 logger = get_logger("cache")
 
 # ── Thread-safe engine pool ─────────────────────────────────────────────
-# Maps {uri_hash: Engine}. Engines are reused across requests for the same DB.
-_engine_pool: dict[str, any] = {}
+# Maps {uri_hash: (Engine, last_used_timestamp)}.
+# Engines are reused across requests for the same DB.
+_engine_pool: dict[str, tuple[Engine, float]] = {}
 _engine_lock = threading.Lock()
+_MAX_POOL_SIZE = 20  # Evict least-recently-used engines beyond this
 
 # Cache TTL for schema discovery
 SCHEMA_CACHE_TTL = 3600  # 1 hour
@@ -98,26 +104,49 @@ def invalidate_schema_cache(db_uri_hash: str):
 
 # ── Engine Pool ─────────────────────────────────────────────────────────
 
-def get_or_create_engine(db_uri: str, engine_args: dict):
+def get_or_create_engine(db_uri: str, engine_args: dict) -> Engine:
     """
-    Thread-safe engine pool. Reuses existing engines for the same URI.
-    Eliminates the cost of creating a new engine + connection pool per request.
+    Thread-safe engine pool with LRU eviction.
+    Reuses existing engines for the same URI.
+    Evicts least-recently-used engines when pool exceeds _MAX_POOL_SIZE.
     """
     uri_hash = get_db_uri_hash(db_uri)
+    now = time.time()
+
     with _engine_lock:
-        if uri_hash not in _engine_pool:
-            _engine_pool[uri_hash] = create_engine(db_uri, **engine_args)
-            logger.info("New engine created", extra={"data": {"db_uri_hash": uri_hash}})
-        else:
+        if uri_hash in _engine_pool:
+            engine, _ = _engine_pool[uri_hash]
+            _engine_pool[uri_hash] = (engine, now)  # Update LRU timestamp
             logger.debug("Engine reused from pool", extra={"data": {"db_uri_hash": uri_hash}})
-        return _engine_pool[uri_hash]
+            return engine
+
+        # Evict oldest entries if pool is full
+        if len(_engine_pool) >= _MAX_POOL_SIZE:
+            oldest_hash = min(_engine_pool, key=lambda k: _engine_pool[k][1])
+            old_engine, _ = _engine_pool.pop(oldest_hash)
+            try:
+                old_engine.dispose()
+            except Exception:
+                pass
+            logger.info("Engine evicted (pool full)", extra={"data": {
+                "evicted": oldest_hash,
+                "pool_size": len(_engine_pool),
+            }})
+
+        engine = create_engine(db_uri, **engine_args)
+        _engine_pool[uri_hash] = (engine, now)
+        logger.info("New engine created", extra={"data": {
+            "db_uri_hash": uri_hash,
+            "pool_size": len(_engine_pool),
+        }})
+        return engine
 
 
 def dispose_engine(db_uri: str):
     """Dispose of a pooled engine (e.g., on connection error)."""
     uri_hash = get_db_uri_hash(db_uri)
     with _engine_lock:
-        engine = _engine_pool.pop(uri_hash, None)
-        if engine:
-            engine.dispose()
+        entry = _engine_pool.pop(uri_hash, None)
+        if entry:
+            entry[0].dispose()
             logger.info("Engine disposed", extra={"data": {"db_uri_hash": uri_hash}})

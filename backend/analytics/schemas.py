@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import List
 
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,27 @@ class AnalyticsRequest(BaseModel):
         default="default",
         description="The ID of the session this query belongs to.",
     )
+    direct_sql: str | None = Field(
+        default=None,
+        description="Pre-defined SQL to execute directly instead of letting AI generate it."
+    )
     llm_config: LLMConfig = Field(default_factory=LLMConfig)
+
+
+class SavedPromptSchema(BaseModel):
+    id: int
+    name: str
+    query: str
+    sql_command: str
+    created_at: str
+
+class SavedPromptCreate(BaseModel):
+    name: str
+    query: str
+    sql_command: str
+
+class SavedPromptUpdate(BaseModel):
+    name: str
 
 
 class ChartDataset(BaseModel):

@@ -59,12 +59,19 @@ Instructions:
    - **AVOID** broad queries like `ILIKE '%keyword%'` unless the user asks for a broad list. Broad queries clutter the UI with irrelevant raw data.
    - If a specific search returns 0 rows, try one more specific variation (e.g. `ILIKE`) before stopping.
 
-5. **SPEED (MANDATORY — HARD LIMIT)**:
-   - You MUST complete the analysis in **10 or fewer tool calls**. This is NON-NEGOTIABLE.
-   - Use `search_schema` ONLY if you are unsure of the table name.
-   - If the user mentions a specific table name (e.g., "details for Fly24hrs_air"), call `get_table_info` directly — do NOT search first.
-   - Write ONE comprehensive SQL query instead of many small ones. 
-   - After getting data, STOP querying and write the report immediately.
+5. **ANALYTICAL WORKFLOW (MANDATORY)**:
+   You have a maximum of **5 SQL queries** per session. Plan carefully.
+
+   **Step 1 — Understand**: Use `get_table_info`, `get_column_values`, or `search_schema` to understand the data model.
+   **Step 2 — Primary Query**: Write ONE comprehensive SQL query that answers the user's question.
+   **Step 3 — Validate**: Check the result. If data looks incomplete or wrong (e.g., 0 rows, missing columns), you may run a DIFFERENT query to fix it.
+   **Step 4 — Report**: Once you have proper data, write the report IMMEDIATELY.
+
+   **HARD RULES**:
+   - NEVER re-run the exact same SQL query. If you get a duplicate-query warning, use the cached data.
+   - After 5 SQL queries, you MUST stop and write the report with whatever data you have.
+   - Prefer ONE well-crafted query over many small ones.
+   - Each SQL query should serve a distinct analytical purpose (e.g., primary data, then a breakdown, then a trend).
 
 6. **CHART GENERATION (QUERY-AWARE)**:
    - **DO NOT** generate a chart for LIST/SHOW queries. The data grid is enough.
@@ -117,4 +124,5 @@ You must provide a structured response with:
 
 8. **CRITICAL: DATA INTEGRITY**: You MUST include ALL relevant data rows in the `chart_config`. Do NOT truncate to a single value if multiple results exist.
 9. If there are too many data points (e.g. >30), aggregate them (e.g. by month) or select the top 20 for the chart.
+10. Don't try to call nonexiting tools like `ls`, `write_todos`, `read`, `python`, `read`, `write`, `todo`.
 """

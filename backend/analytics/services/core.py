@@ -9,6 +9,7 @@ Every step is logged with timing and request context.
 import json
 import os
 import time
+from decimal import Decimal
 
 from deepagents import create_deep_agent
 
@@ -157,6 +158,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
     send_status(ctx.task_id, "Initializing AI agent...")
     llm = init_llm(payload.model, payload.api_key, payload.llm_config, ctx)
 
+    history_entry = None
     try:
         # ── 6. Create Agent ─────────────────────────────────────────────
         agent = create_deep_agent(
@@ -165,9 +167,6 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             system_prompt=formatted_prompt,
             response_format=AnalyticsResponse,
         )
-
-        # Messages are built before budget calculation, no need to build again
-        # messages = build_messages(payload.session_id, payload.query)
 
         # ── 8. Create History Record ───────────────────────────────────
         start_time = time.time()
@@ -180,23 +179,92 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             sql_query="",
             execution_time=0.0,
             has_data=False,
+            task_id=ctx.task_id,
         )
 
         send_status(ctx.task_id, "AI is analyzing your query...")
+        yield {"event": "query_id", "data": {"id": history_entry.id}}
         yield {"event": "status", "data": {"message": "AI is analyzing your query..."}}
 
         # ── 9. Stream Agent Execution ──────────────────────────────────
         result_holder = StreamResult()
-        for chunk in stream_agent(
-            agent, messages, payload.session_id, result_holder, ctx
-        ):
-            yield chunk
+        
+        if getattr(payload, "direct_sql", None):
+            # Fast-path for Saved Prompts: execute SQL directly and summarize
+            from langchain_core.messages import HumanMessage
+            
+            send_status(ctx.task_id, "Executing saved SQL query...")
+            yield {"event": "status", "data": {"message": "Executing saved SQL query..."}}
+            
+            # Find the SQL execution tool
+            sql_tool = next((t for t in tools if t.name == "execute_read_only_sql"), None)
+            if not sql_tool:
+                yield {"event": "status", "data": {"message": "Error: SQL tool not found."}}
+                return
+                
+            # Execute SQL using LangChain tool interface
+            sql_result_str = sql_tool.invoke({"query": payload.direct_sql})
+            raw_data = tool_state.get("best_raw_data") or tool_state.get("last_raw_data") or []
+            
+            send_status(ctx.task_id, "Generating fast report...")
+            yield {"event": "status", "data": {"message": "Generating fast report..."}}
+            
+            fast_prompt = f"""
+            You are a data analyst. The user asked: "{payload.query}"
+            I have already executed the database query for this.
+            
+            SQL Executed: {payload.direct_sql}
+            Result Row Count: {len(raw_data)}
+            Result Sample: {str(raw_data[:5])}
+            
+            Provide a short markdown analytical report (minimum 3 sentences) summarizing this data. 
+            Do NOT include code blocks, just the markdown report.
+            """
+            
+            try:
+                response = llm.stream([HumanMessage(content=fast_prompt)])
+                
+                full_report = ""
+                for chunk in response:
+                    content = getattr(chunk, "content", chunk)
+                    if isinstance(content, list):
+                        content = "".join([c.get("text", "") if isinstance(c, dict) else str(c) for c in content])
+                    
+                    if content and isinstance(content, str):
+                        full_report += content
+                        yield {
+                            "event": "delta",
+                            "data": {"content": content, "timestamp": time.time()},
+                        }
+            except Exception as e:
+                logger.error("Fast report failed", exc_info=True)
+                err_msg = f"Fast report generation failed: {str(e)}"
+                full_report = err_msg
+                yield {"event": "delta", "data": {"content": err_msg, "timestamp": time.time()}}
+                
+            # Mock the stream_data to look like agent output
+            # By providing `raw_data`, the frontend extractor will know data exists
+            result_holder.data = {
+                "last_non_empty_report": full_report,
+                "tool_calls": [],
+                "raw_data": raw_data,
+                "sql_query": payload.direct_sql
+            }
+            tool_state["last_sql_query"] = payload.direct_sql
+            
+        else:
+            # Normal deep-agent loop
+            for chunk in stream_agent(
+                agent, messages, payload.session_id, result_holder, ctx
+            ):
+                yield chunk
 
         # Check if a fatal error occurred during streaming
         if result_holder.has_error:
             history_entry.report = (
                 "Error occurred during analysis. Check logs for details."
             )
+            history_entry.execution_time = 0.1
             history_entry.save()
             return
 
@@ -214,40 +282,60 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             result["chart_config"], result["raw_data"], query=payload.query
         )
 
-        exec_time = time.time() - start_time
+        # ── 11. Final Telemetry Calculation ────────────────────────────
+        exec_time = time.time() - ctx.start_time
 
-        # ── 11. Save to History ────────────────────────────────────────
+        # Sanitize raw_data to ensure JSON-serializability
+        def _sanitize_row(row):
+            if not isinstance(row, dict):
+                return row
+            clean = {}
+            for k, v in row.items():
+                if isinstance(v, (bytes, memoryview)):
+                    clean[k] = "(binary data)"
+                elif isinstance(v, Decimal):
+                    clean[k] = float(v)
+                elif hasattr(v, "isoformat"):
+                    clean[k] = v.isoformat()
+                elif isinstance(v, (str, int, float, bool)) or v is None:
+                    clean[k] = v
+                else:
+                    clean[k] = str(v)
+            return clean
+
+        if isinstance(result["raw_data"], list):
+            result["raw_data"] = [_sanitize_row(r) for r in result["raw_data"]]
+
+        # Token Usage Calculation
+        # Output tokens: reasoning + tool calls + final report
+        out_tokens = count_tokens(stream_data.get("full_content", "")) + count_tokens(stream_data.get("full_tool_args_str", ""))
+        
+        # Input tokens: initial context + all tool outputs
+        tool_output_str = json.dumps(tool_state.get("best_raw_data") or [])
+        in_tokens = budget["total_used"] + count_tokens(tool_output_str)
+        
+        # Add padding
+        in_tokens = int(in_tokens * 1.05) 
+        out_tokens = int(out_tokens * 1.05)
+
+        cost = (in_tokens / 1_000_000 * model_config.cost_per_1m_input) + (
+            out_tokens / 1_000_000 * model_config.cost_per_1m_output
+        )
+
+        # ── 12. Final Save to History ──────────────────────────────────
         history_entry.report = result["report"]
         history_entry.chart_config = result["chart_config"]
         history_entry.raw_data = result["raw_data"]
         history_entry.sql_query = result["sql_query"]
         history_entry.execution_time = exec_time
         history_entry.has_data = bool(result["raw_data"] and len(result["raw_data"]) > 0)
+        history_entry.input_tokens = in_tokens
+        history_entry.output_tokens = out_tokens
+        history_entry.estimated_cost = round(cost, 4)
         history_entry.save()
 
-        # ── 12. Yield Final Result ─────────────────────────────────────
-        yield {
-            "event": "result",
-            "data": {
-                "report": result["report"],
-                "chart_config": result["chart_config"],
-                "raw_data": result["raw_data"],
-                "sql_query": result["sql_query"],
-                "execution_time": exec_time,
-                "done": True,
-            },
-        }
-
-        # Estimate usage
-        out_tokens = count_tokens(result["report"]) + count_tokens(
-            str(result.get("chart_config", ""))
-        )
-        raw_data_str = str(tool_state.get("last_raw_data", ""))
-        in_tokens = budget["total_used"] + count_tokens(raw_data_str)
-        cost = (in_tokens / 1_000_000 * model_config.cost_per_1m_input) + (
-            out_tokens / 1_000_000 * model_config.cost_per_1m_output
-        )
-
+        # ── 13. Yield Final Results ─────────────────────────────────────
+        # Send usage event first
         yield {
             "event": "usage",
             "data": {
@@ -257,11 +345,23 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             },
         }
 
-        # Persist token usage to DB for history display
-        history_entry.input_tokens = in_tokens
-        history_entry.output_tokens = out_tokens
-        history_entry.estimated_cost = round(cost, 4)
-        history_entry.save(update_fields=["input_tokens", "output_tokens", "estimated_cost"])
+        # Send final result (includes everything)
+        yield {
+            "event": "result",
+            "data": {
+                "report": result["report"],
+                "chart_config": result["chart_config"],
+                "raw_data": result["raw_data"],
+                "sql_query": result["sql_query"],
+                "execution_time": exec_time,
+                "usage": {
+                    "input_tokens": in_tokens,
+                    "output_tokens": out_tokens,
+                    "estimated_cost": round(cost, 4),
+                },
+                "done": True,
+            },
+        }
 
         # ── Final Log ──────────────────────────────────────────────────
         logger.info(
@@ -278,23 +378,33 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                     "sql_queries_count": len(tool_state.get("all_sql_queries", [])),
                     "connect_time_ms": connect_time,
                     "discover_time_ms": discover_time,
+                    "input_tokens": in_tokens,
+                    "output_tokens": out_tokens,
                 }
             },
         )
 
     except Exception as e:
+        err_msg = str(e)
         logger.error(
             "Pipeline error",
             exc_info=True,
             extra={
                 "data": {
                     **ctx.to_dict(),
-                    "error": str(e),
+                    "error": err_msg,
                     "elapsed_ms": ctx.elapsed_ms(),
                 }
             },
         )
-        yield {"event": "error", "data": {"message": f"Error: {str(e)}"}}
+        # Update history record with the error if it was created
+        if history_entry:
+            history_entry.report = f"Error: {err_msg}"
+            # Use a small non-zero execution time to signal completion to the frontend
+            history_entry.execution_time = history_entry.execution_time or 0.1
+            history_entry.save()
+            
+        yield {"event": "error", "data": {"message": f"Error: {err_msg}"}}
 
     finally:
         pass

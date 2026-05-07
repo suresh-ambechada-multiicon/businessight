@@ -20,6 +20,7 @@ export const RawDataTable = memo(
     const [filters, setFilters] = useState<{ [key: string]: string }>({});
     const [activeFilters, setActiveFilters] = useState<{ [key: string]: boolean }>({});
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [visibleRows, setVisibleRows] = useState(100);
 
     // Sync with initialData if it changes
     useEffect(() => {
@@ -249,7 +250,7 @@ export const RawDataTable = memo(
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAndSortedData.map((row, i) => (
+                  {filteredAndSortedData.slice(0, visibleRows).map((row, i) => (
                     <tr key={i}>
                       <td style={{ opacity: 0.5, fontSize: "0.75rem" }}>
                         {i + 1}
@@ -266,6 +267,26 @@ export const RawDataTable = memo(
             ) : (
               <div style={{ padding: "1rem", textAlign: "center", opacity: 0.6 }}>
                 No data available.
+              </div>
+            )}
+            
+            {filteredAndSortedData.length > visibleRows && (
+              <div style={{ padding: "1rem", display: "flex", justifyContent: "center" }}>
+                <button 
+                  onClick={() => setVisibleRows(prev => prev + 100)}
+                  className="load-more-btn"
+                  style={{
+                    padding: "8px 16px",
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border-color)",
+                    borderRadius: "var(--radius-md)",
+                    color: "var(--text-primary)",
+                    fontSize: "0.875rem",
+                    cursor: "pointer"
+                  }}
+                >
+                  Load More ({filteredAndSortedData.length - visibleRows} remaining)
+                </button>
               </div>
             )}
           </div>

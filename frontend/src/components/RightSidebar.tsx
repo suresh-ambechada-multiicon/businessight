@@ -26,7 +26,7 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
       }
       return null;
     })
-    .filter(Boolean);
+    .filter((report): report is NonNullable<typeof report> => report !== null);
 
   const scrollToInteraction = (elementId: string) => {
     const element = document.getElementById(elementId);

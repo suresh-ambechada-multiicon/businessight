@@ -1,16 +1,18 @@
 import React, { useState, useMemo } from "react";
 import { ChevronUp } from "lucide-react";
-import type { Interaction } from "../types";
+import type { Interaction, SavedPrompt } from "../types";
 import { InteractionItem } from "./InteractionItem";
 import { ChatInputArea } from "./ChatInputArea";
 import { useChatScroll } from "../hooks/useChatScroll";
 
 interface MainContentProps {
-  onQuery: (query: string) => void;
+  onQuery: (query: string, directSql?: string, promptName?: string) => void;
   onStop: () => void;
   isLoading: boolean;
   interactions: Interaction[];
   theme: "light" | "dark";
+  savedPrompts: SavedPrompt[];
+  setSavedPrompts: React.Dispatch<React.SetStateAction<SavedPrompt[]>>;
 }
 
 export const MainContent: React.FC<MainContentProps> = ({
@@ -19,6 +21,8 @@ export const MainContent: React.FC<MainContentProps> = ({
   isLoading,
   interactions,
   theme,
+  savedPrompts,
+  setSavedPrompts,
 }) => {
   const [chartOverrides, setChartOverrides] = useState<Record<number, string>>(
     {},
@@ -58,16 +62,22 @@ export const MainContent: React.FC<MainContentProps> = ({
                 </button>
               </div>
             )}
-            {paginatedInteractions.map((interaction) => (
-              <InteractionItem
-                key={interaction.id || interactions.indexOf(interaction)}
-                interaction={interaction}
-                idx={interactions.indexOf(interaction)}
-                chartOverrides={chartOverrides}
-                setChartOverrides={setChartOverrides}
-                theme={theme}
-              />
-            ))}
+            {paginatedInteractions.map((interaction, mapIdx) => {
+              // Compute the index within the full interactions array
+              const fullIdx = interactions.length - paginatedInteractions.length + mapIdx;
+              return (
+                <InteractionItem
+                  key={interaction.id || `int-${fullIdx}`}
+                  interaction={interaction}
+                  idx={fullIdx}
+                  chartOverrides={chartOverrides}
+                  setChartOverrides={setChartOverrides}
+                  theme={theme}
+                  savedPrompts={savedPrompts}
+                  setSavedPrompts={setSavedPrompts}
+                />
+              );
+            })}
             <div ref={messagesEndRef} />
             <div style={{ height: "150px", flexShrink: 0 }} />
           </div>
@@ -79,6 +89,7 @@ export const MainContent: React.FC<MainContentProps> = ({
         onStop={onStop}
         isLoading={isLoading}
         isInitial={isInitial}
+        savedPrompts={savedPrompts}
       />
     </main>
   );

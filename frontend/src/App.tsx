@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { MainContent } from "./components/MainContent";
 import { RightSidebar } from "./components/RightSidebar";
 import { SettingsModal } from "./components/SettingsModal";
+import { ManagePromptsModal } from "./components/ManagePromptsModal";
 import { useAppLogic } from "./hooks/useAppLogic";
 import "./App.css";
 
@@ -16,10 +17,11 @@ function App() {
     "light",
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isManagePromptsOpen, setIsManagePromptsOpen] = useState(false);
 
   // Settings State
   const [model, setModel] = useState(
-    () => localStorage.getItem("model") || "openai:gpt-4o",
+    () => localStorage.getItem("model") || "google_genai:gemini-2.5-flash",
   );
   const [apiKey, setApiKey] = useState(
     () => localStorage.getItem("apiKey") || "",
@@ -36,6 +38,8 @@ function App() {
     handleDeleteSession,
     handleStop,
     handleQuery,
+    savedPrompts,
+    setSavedPrompts,
   } = useAppLogic();
 
   // Theme effect
@@ -89,7 +93,7 @@ function App() {
   const currentInteractions = useMemo(
     () =>
       interactions.filter(
-        (i) => ((i as any).session_id || "default") === currentSessionId,
+        (i) => (i.session_id || "default") === currentSessionId,
       ),
     [interactions, currentSessionId],
   );
@@ -105,14 +109,17 @@ function App() {
         onSelectSession={setCurrentSessionId}
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
+        openManagePrompts={() => setIsManagePromptsOpen(true)}
       />
 
       <MainContent
-        onQuery={(q) => handleQuery(q, model, apiKey, dbUrl)}
+        onQuery={(q, d, pName) => handleQuery(q, model, apiKey, dbUrl, d, pName)}
         onStop={handleStop}
         isLoading={isLoading}
         interactions={currentInteractions}
         theme={effectiveTheme}
+        savedPrompts={savedPrompts}
+        setSavedPrompts={setSavedPrompts}
       />
 
       <RightSidebar interactions={currentInteractions} />
@@ -126,6 +133,13 @@ function App() {
         setApiKey={setApiKey}
         dbUrl={dbUrl}
         setDbUrl={setDbUrl}
+      />
+
+      <ManagePromptsModal
+        isOpen={isManagePromptsOpen}
+        onClose={() => setIsManagePromptsOpen(false)}
+        savedPrompts={savedPrompts}
+        setSavedPrompts={setSavedPrompts}
       />
     </div>
   );

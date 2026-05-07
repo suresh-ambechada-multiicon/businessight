@@ -1,8 +1,8 @@
 import axios from "axios";
 
-// Dynamically use the current hostname so network users reach the correct backend IP
 const HOST = window.location.hostname;
-const BASE_URL = `http://${HOST}:8000/api/v1`;
+const PROTOCOL = window.location.protocol; // http: or https:
+const BASE_URL = `${PROTOCOL}//${HOST}:8000/api/v1`;
 
 export const api = {
   fetchSessions: async () => {
@@ -49,5 +49,25 @@ export const api = {
       method: "GET",
       signal,
     });
+  },
+
+  fetchSavedPrompts: async () => {
+    const response = await axios.get(`${BASE_URL}/prompts/`);
+    return response.data;
+  },
+
+  createSavedPrompt: async (payload: { name: string; query: string; sql_command: string }) => {
+    const response = await axios.post(`${BASE_URL}/prompts/`, payload);
+    return response.data;
+  },
+
+  renameSavedPrompt: async (id: number, name: string) => {
+    const response = await axios.put(`${BASE_URL}/prompts/${id}/`, { name });
+    return response.data;
+  },
+
+  deleteSavedPrompt: async (id: number) => {
+    const response = await axios.delete(`${BASE_URL}/prompts/${id}/`);
+    return response.data;
   },
 };

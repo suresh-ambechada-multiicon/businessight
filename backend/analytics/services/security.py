@@ -30,6 +30,15 @@ BLOCKED_PATTERNS = [
     r"\bxp_\w+",
     r"\bsp_\w+",
     r";\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)",
+    # MSSQL-specific attack patterns
+    r"\bWAITFOR\s+DELAY\b",
+    r"\bOPENROWSET\b",
+    r"\bBULK\s+INSERT\b",
+    r"\bOPENDATASOURCE\b",
+    r"\bSHUTDOWN\b",
+    r"\bDBCC\b",
+    r"\bRECONFIGURE\b",
+    r"\bMERGE\b",
 ]
 
 _compiled_patterns = [re.compile(p, re.IGNORECASE) for p in BLOCKED_PATTERNS]

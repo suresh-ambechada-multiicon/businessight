@@ -26,7 +26,7 @@ logger = get_logger("db")
 
 
 # Prefixes to exclude from "business tables" list
-INTERNAL_TABLE_PREFIXES = ("django_", "auth_", "analytics_queryhistory")
+INTERNAL_TABLE_PREFIXES = ("django_", "auth_", "analytics_")
 
 
 def normalize_db_uri(db_uri: str) -> str:
@@ -258,13 +258,14 @@ def discover_tables(db, active_schema, ctx=None) -> list[str]:
     all_tables = []
     try:
         # Use a faster direct query for SQL Server to bypass slow SQLAlchemy inspection
-        if "mssql" in db.engine.url.drivername:
-            with db.engine.connect() as conn:
+        if "mssql" in db._engine.url.drivername:
+            from sqlalchemy import text as sa_text
+            with db._engine.connect() as conn:
                 # Use sys.tables which is much faster than INFORMATION_SCHEMA in many cases
                 query = "SELECT name FROM sys.tables WHERE is_ms_shipped = 0"
                 if active_schema:
                     query += f" AND SCHEMA_NAME(schema_id) = '{active_schema}'"
-                result = conn.execute(text(query))
+                result = conn.execute(sa_text(query))
                 all_tables = [row[0] for row in result]
 
         if not all_tables:
@@ -307,4 +308,8 @@ def detect_dialect(db_uri: str) -> str:
         return "MySQL"
     elif "sqlite" in db_uri:
         return "SQLite"
-    return "PostgreSQL"
+    elif "oracle" in db_uri:
+        return "Oracle"
+    elif "postgresql" in db_uri or "postgres" in db_uri:
+        return "PostgreSQL"
+    return "PostgreSQL"  # Safe default for psycopg2-based URIs

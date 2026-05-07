@@ -22,12 +22,38 @@ logger = get_logger("tools")
 
 def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     """
-    Factory that creates the three analytics tools bound to a specific
+    Factory that creates the analytics tools bound to a specific
     database connection and table list.
 
     Returns (tools_list, tool_state_dict).
     tool_state tracks executed queries and their timings.
     """
+
+    # ── Dialect-aware helpers ────────────────────────────────────────
+    def _is_mssql() -> bool:
+        return "mssql" in db._engine.url.drivername
+
+    def _quote_ident(name: str) -> str:
+        """Quote a SQL identifier to prevent injection. Uses [] for MSSQL, \"\" for others."""
+        # Strip any existing quotes first
+        name = name.strip('"').strip('[]').strip('`')
+        if _is_mssql():
+            return f"[{name}]"
+        return f'"{name}"'
+
+    def _full_table(table_name: str) -> str:
+        """Build a fully-qualified, quoted table reference."""
+        schema = db._schema
+        if schema:
+            return f"{_quote_ident(schema)}.{_quote_ident(table_name)}"
+        return _quote_ident(table_name)
+
+
+    def _select_top(columns: str, table: str, n: int, extra: str = "") -> str:
+        """Build a dialect-aware SELECT with row limit."""
+        if _is_mssql():
+            return f"SELECT TOP {n} {columns} FROM {table} {extra}".strip()
+        return f"SELECT {columns} FROM {table} {extra} LIMIT {n}".strip()
 
     tool_state = {
         "last_sql_query": "",
@@ -72,8 +98,8 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                 # Try fast MSSQL path
                 col_str = ""
                 try:
-                    if "mssql" in db.engine.url.drivername:
-                        with db.engine.connect() as conn:
+                    if hasattr(db, "_engine") and "mssql" in db._engine.url.drivername:
+                        with db._engine.connect() as conn:
                             full_table_name = f"{db._schema}.{t}" if db._schema else t
                             query = f"""
                                 SELECT c.name, tp.name as type 
@@ -115,8 +141,12 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         Use this tool to fetch data to answer the user's analytical questions.
         IMPORTANT: This returns a JSON string array of dicts representing the rows.
         """
-        # Note: stream_agent already emits a 'tool' event with the query text.
-        # Don't send a status here — it would overwrite the SQL display in the UI.
+        # Clean the query if it has '-- Query X' wrapper comments from previous executions
+        import re
+        matches = list(re.finditer(r"-- Query \d+(?: \([^)]+\))?\s*\n([\s\S]*?)(?=-- Query \d+|$)", query))
+        if matches:
+            query = matches[0].group(1).strip()
+            
         # Security validation
         is_safe, reason = validate_sql(query, ctx)
         if not is_safe:
@@ -124,19 +154,35 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
 
         try:
             # Prevent redundant execution and infinite loops
-            # If the exact same query is run again, return the previous result from cache
             query_cache = tool_state.setdefault("query_cache", {})
             normalized_query = query.strip().lower()
             
+            # Hard cap: max 5 unique SQL queries per session
+            sql_call_count = tool_state.get("sql_call_count", 0)
+            if sql_call_count >= 5:
+                logger.warning("SQL call limit reached", extra={"data": {**_ctx, "count": sql_call_count}})
+                return (
+                    "LIMIT REACHED: You have already executed 5 SQL queries this session. "
+                    "You have sufficient data. Write your final report NOW using the data "
+                    "you already collected. Do NOT attempt more queries."
+                )
+            
+            # Duplicate query: return cached result so AI has the data
             if normalized_query in query_cache:
                 logger.info("SQL cache hit", extra={"data": {
                     **_ctx, "query_preview": query[:200],
                 }})
-                # Return the cached result so the AI can move on instead of looping
-                return query_cache[normalized_query]
-
+                cached_result = query_cache[normalized_query]
+                return (
+                    f"DUPLICATE QUERY — returning cached result. Do NOT re-execute this query.\n\n"
+                    f"{cached_result}\n\n"
+                    f"You already have this data. If it's sufficient, write your report. "
+                    f"If you need DIFFERENT data, write a DIFFERENT SQL query."
+                )
+            
             tool_state["last_sql_query"] = query
             tool_state["last_raw_data"] = None
+            tool_state["sql_call_count"] = sql_call_count + 1
 
             start_q_time = time.time()
 
@@ -153,10 +199,19 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                     row_dict = {}
                     for i, key in enumerate(keys):
                         val = row[i]
-                        if isinstance(val, Decimal):
+                        if val is None:
+                            pass  # keep None
+                        elif isinstance(val, Decimal):
                             val = float(val)
                         elif hasattr(val, "isoformat"):
                             val = val.isoformat()
+                        elif isinstance(val, (bytes, memoryview)):
+                            val = "(binary data)"
+                        elif isinstance(val, (int, float, str, bool)):
+                            pass  # already JSON-safe
+                        else:
+                            # Catch UUIDs, custom types, etc.
+                            val = str(val)
                         row_dict[key] = val
                     rows.append(row_dict)
 
@@ -187,6 +242,14 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                     f"overflow. If you need total counts or aggregated data, you MUST "
                     f"rewrite your SQL query using COUNT(), SUM(), or GROUP BY instead "
                     f"of SELECT *."
+                )
+            
+            # Add guidance based on how many queries are left
+            remaining = 5 - tool_state["sql_call_count"]
+            if remaining <= 2:
+                output_str += (
+                    f"\n\n⚠️ You have {remaining} SQL queries remaining. "
+                    f"Finalize your analysis and write the report soon."
                 )
             
             # Cache the successful result
@@ -281,8 +344,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         table_name = table_name.strip()
 
         try:
-            schema_prefix = f"{db._schema}." if db._schema else ""
-            full_table = f"{schema_prefix}{table_name}"
+            full_table = _full_table(table_name)
 
             with db._engine.connect() as conn:
                 # Get row count
@@ -290,7 +352,6 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                 total_rows = count_result.scalar()
 
                 # Get column info with null counts and distinct counts
-                # Use information_schema for column names/types
                 db_inspector = inspect(db._engine)
                 columns = db_inspector.get_columns(table_name, schema=db._schema)
 
@@ -300,10 +361,11 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
                 for col in columns:
                     col_name = col["name"]
                     col_type = str(col["type"])
+                    quoted_col = _quote_ident(col_name)
                     try:
                         stat_query = text(
-                            f"SELECT COUNT(*) - COUNT({col_name}) as nulls, "
-                            f"COUNT(DISTINCT {col_name}) as distincts "
+                            f"SELECT COUNT(*) - COUNT({quoted_col}) as nulls, "
+                            f"COUNT(DISTINCT {quoted_col}) as distincts "
                             f"FROM {full_table}"
                         )
                         stat_result = conn.execute(stat_query)
@@ -344,17 +406,17 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         column_name = column_name.strip()
 
         try:
-            schema_prefix = f"{db._schema}." if db._schema else ""
-            full_table = f"{schema_prefix}{table_name}"
+            full_table = _full_table(table_name)
+            quoted_col = _quote_ident(column_name)
 
             with db._engine.connect() as conn:
-                query = text(
-                    f"SELECT {column_name}, COUNT(*) as cnt "
-                    f"FROM {full_table} "
-                    f"GROUP BY {column_name} "
-                    f"ORDER BY cnt DESC "
-                    f"LIMIT 50"
+                sql = _select_top(
+                    f"{quoted_col}, COUNT(*) as cnt",
+                    full_table,
+                    50,
+                    f"GROUP BY {quoted_col} ORDER BY cnt DESC"
                 )
+                query = text(sql)
                 result = conn.execute(query)
                 rows = result.fetchall()
 

@@ -270,28 +270,39 @@ export const ChartDisplay = memo(({ type, config }: ChartDisplayProps) => {
     return (
       <ResponsiveContainer width="100%" height={350}>
         <PieChart>
-          <Pie
-            data={chartData}
-            cx="50%"
-            cy="50%"
-            labelLine={!isLargeDataset}
-            label={isLargeDataset ? false : ({ name, percent }) =>
-              `${truncateLabel(name)}: ${(percent ? percent * 100 : 0).toFixed(0)}%`
-            }
-            outerRadius={100}
-            fill="#8884d8"
-            dataKey={data.datasets[0].label}
-            isAnimationActive={false}
-          >
-            {chartData.map((_entry: any, index: number) => (
-              <Cell
-                key={`cell-${index}`}
-                fill={COLORS[index % COLORS.length]}
-              />
-            ))}
-          </Pie>
+          {data.datasets.map((ds: any, i: number) => {
+            const isLast = i === data.datasets.length - 1;
+            const outer = 100 - (i * 25);
+            const inner = 100 - ((i + 1) * 25);
+            return (
+              <Pie
+                key={ds.label}
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={data.datasets.length > 1 ? inner : 0}
+                outerRadius={outer}
+                paddingAngle={2}
+                labelLine={!isLargeDataset && isLast}
+                label={(!isLargeDataset && isLast) ? ({ name, percent }) =>
+                  `${truncateLabel(name)}: ${(percent ? percent * 100 : 0).toFixed(0)}%` : false
+                }
+                dataKey={ds.label}
+                nameKey="name"
+                isAnimationActive={false}
+                hide={hiddenDatasets[ds.label]}
+              >
+                {chartData.map((_entry: any, index: number) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={COLORS[(index + i) % COLORS.length]}
+                  />
+                ))}
+              </Pie>
+            );
+          })}
           <Tooltip formatter={formatNumber} contentStyle={tooltipStyle} />
-          {!isLargeDataset && <Legend />}
+          <Legend {...legendProps} />
         </PieChart>
       </ResponsiveContainer>
     );

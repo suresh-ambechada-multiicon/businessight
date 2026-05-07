@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ConfirmModal } from "./ConfirmModal";
 import {
   Sun,
   Moon,
@@ -6,6 +8,7 @@ import {
   Settings,
   PlusCircle,
   Trash2,
+  Command,
 } from "lucide-react";
 
 interface Session {
@@ -22,6 +25,7 @@ interface SidebarProps {
   onSelectSession: (id: string) => void;
   onNewChat: () => void;
   onDeleteSession: (id: string) => void;
+  openManagePrompts: () => void;
 }
 
 export function Sidebar({
@@ -33,7 +37,9 @@ export function Sidebar({
   onSelectSession,
   onNewChat,
   onDeleteSession,
+  openManagePrompts,
 }: SidebarProps) {
+  const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -42,9 +48,13 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-content">
-        <button className="new-chat-btn" onClick={onNewChat}>
+        <button className="new-chat-btn" onClick={onNewChat} style={{ marginBottom: "8px" }}>
           <PlusCircle size={18} />
           <span>New Chat</span>
+        </button>
+        <button className="new-chat-btn" onClick={openManagePrompts} style={{ background: "transparent", color: "var(--text-secondary)", border: "1px solid var(--border-color)" }}>
+          <Command size={18} />
+          <span>Saved Prompts</span>
         </button>
 
         <h3 className="sidebar-title">Recent Chats</h3>
@@ -75,8 +85,7 @@ export function Sidebar({
                   className="delete-btn"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm("Delete this chat?"))
-                      onDeleteSession(session.id);
+                    setDeleteSessionId(session.id);
                   }}
                   style={{ opacity: 0.4, transition: "opacity 0.2s" }}
                 />
@@ -106,6 +115,19 @@ export function Sidebar({
           <span>Settings</span>
         </button>
       </div>
+
+      <ConfirmModal
+        isOpen={!!deleteSessionId}
+        title="Delete Chat?"
+        message="Are you sure you want to delete this chat? This action cannot be undone."
+        onCancel={() => setDeleteSessionId(null)}
+        onConfirm={() => {
+          if (deleteSessionId) {
+            onDeleteSession(deleteSessionId);
+            setDeleteSessionId(null);
+          }
+        }}
+      />
     </aside>
   );
 }

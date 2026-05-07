@@ -30,6 +30,16 @@ export function SettingsModal({
   const [availableModels, setAvailableModels] = useState<{ id: string, name: string, provider: string }[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
 
+  // Sync temp state from props whenever modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setTempModel(model);
+      setTempApiKey(apiKey);
+      setTempDbUrl(dbUrl);
+      setIsCustom(false);
+    }
+  }, [isOpen, model, apiKey, dbUrl]);
+
   useEffect(() => {
     if (isOpen) {
       api.fetchModels().then(data => {

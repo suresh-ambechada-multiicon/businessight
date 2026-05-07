@@ -8,6 +8,7 @@ export const useAppLogic = () => {
   });
   const [sessions, setSessions] = useState<Session[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
+  const [savedPrompts, setSavedPrompts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const loadedSessionsRef = useRef<Set<string>>(new Set());
@@ -43,7 +44,18 @@ export const useAppLogic = () => {
         console.error("Failed to fetch sessions", error);
       }
     };
+
+    const fetchSavedPrompts = async () => {
+      try {
+        const data = await api.fetchSavedPrompts();
+        setSavedPrompts(data);
+      } catch (error) {
+        console.error("Failed to fetch saved prompts", error);
+      }
+    };
+
     fetchSessions();
+    fetchSavedPrompts();
   }, []);
 
   // Load history for current session (lazy — only when session changes)
@@ -59,6 +71,11 @@ export const useAppLogic = () => {
       }));
 
       loadedSessionsRef.current.add(sessionId);
+      // Cap the set to prevent unbounded growth across session switches
+      if (loadedSessionsRef.current.size > 20) {
+        const first = loadedSessionsRef.current.values().next().value;
+        if (first) loadedSessionsRef.current.delete(first);
+      }
 
       setInteractions((prev) => {
         const existingIds = new Set(prev.map((i) => i.id));
@@ -79,6 +96,75 @@ export const useAppLogic = () => {
     }
   }, [currentSessionId, loadSessionHistory]);
 
+  // Poll history if there are any incomplete interactions.
+  // Uses a ref to avoid putting `interactions` in the dep array (which causes
+  // an infinite re-render loop: setInteractions -> deps change -> new interval).
+  const needsPollingRef = useRef(false);
+
+  useEffect(() => {
+    needsPollingRef.current = interactions.some(
+      (i) =>
+        String(i.session_id) === String(currentSessionId) &&
+        (!i.result || i.result.execution_time === 0)
+    );
+  }, [interactions, currentSessionId]);
+
+  useEffect(() => {
+    if (!currentSessionId) return;
+
+    const interval = setInterval(async () => {
+      if (!needsPollingRef.current) return; // Skip poll if nothing is incomplete
+
+      try {
+        const data = await api.fetchHistory(currentSessionId);
+        const mappedData = data.map((item: any, idx: number) => ({
+          ...item,
+          id: item.id || `hist-${idx}-${Date.now()}`,
+          session_id: String(item.session_id || "default"),
+        }));
+
+        setInteractions((prev) => {
+          let changed = false;
+          const updated = [...prev];
+
+          mappedData.forEach((newItem: any) => {
+            const idx = updated.findIndex((i) => i.id === newItem.id);
+            if (idx !== -1) {
+              const existingItem = updated[idx];
+              const wasIncomplete =
+                !existingItem.result || existingItem.result.execution_time === 0;
+              const isNowComplete =
+                newItem.result && newItem.result.execution_time !== 0;
+
+              if (wasIncomplete && isNowComplete) {
+                updated[idx] = newItem;
+                changed = true;
+              }
+            } else if (
+              String(newItem.session_id) === String(currentSessionId)
+            ) {
+              const isOptimisticMatch = updated.some(
+                (i) =>
+                  i.query === newItem.query &&
+                  (!i.result || i.result.execution_time === 0)
+              );
+              if (!isOptimisticMatch) {
+                updated.push(newItem);
+                changed = true;
+              }
+            }
+          });
+
+          return changed ? updated : prev;
+        });
+      } catch (error) {
+        console.error("Polling history failed", error);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [currentSessionId]); // Only re-create interval when session changes
+
   const handleNewChat = () => {
     const newId = Date.now().toString();
     setCurrentSessionId(newId);
@@ -92,7 +178,7 @@ export const useAppLogic = () => {
     try {
       await api.deleteSession(sessionId);
       setInteractions((prev) =>
-        prev.filter((i) => (i as any).session_id !== sessionId),
+        prev.filter((i) => i.session_id !== sessionId),
       );
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       loadedSessionsRef.current.delete(sessionId);
@@ -117,21 +203,28 @@ export const useAppLogic = () => {
       );
     setIsLoading(false);
 
+    // Find the last incomplete interaction in the CURRENT session (not globally)
     setInteractions((prev) => {
       if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      if (!last.result) {
-        return prev.map((i, idx) =>
-          idx === prev.length - 1
-            ? {
-                ...i,
-                status: "Analysis stopped.",
-                result: { report: "_Analysis cancelled by user._" },
-              }
-            : i,
-        );
-      }
-      return prev;
+
+      // Walk backwards to find the last incomplete item for this session
+      const lastIdx = prev.findLastIndex(
+        (i) =>
+          (i.session_id || "default") === currentSessionId &&
+          !i.result
+      );
+
+      if (lastIdx === -1) return prev;
+
+      return prev.map((i, idx) =>
+        idx === lastIdx
+          ? {
+              ...i,
+              status: "Analysis stopped.",
+              result: { report: "_Analysis cancelled by user._" },
+            }
+          : i,
+      );
     });
   };
 
@@ -140,6 +233,8 @@ export const useAppLogic = () => {
     model: string,
     apiKey: string,
     dbUrl: string,
+    directSql?: string,
+    promptName?: string
   ) => {
     const newInteractionId = Date.now();
     setInteractions((prev) => [
@@ -148,8 +243,9 @@ export const useAppLogic = () => {
         id: newInteractionId,
         session_id: currentSessionId,
         query,
+        saved_prompt_name: promptName,
         result: null,
-      } as any,
+      },
     ]);
     setIsLoading(true);
 
@@ -168,13 +264,18 @@ export const useAppLogic = () => {
     abortControllerRef.current = controller;
 
     try {
-      const response = await api.submitQuery({
+      const payload: any = {
         query,
         model,
         api_key: apiKey,
         db_url: dbUrl,
         session_id: currentSessionId,
-      });
+      };
+      if (directSql) {
+        payload.direct_sql = directSql;
+      }
+      
+      const response = await api.submitQuery(payload);
 
       const taskId = response.task_id;
       const streamResponse = await api.streamResults(taskId, controller.signal);
@@ -185,8 +286,10 @@ export const useAppLogic = () => {
       const reader = streamResponse.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let activeId: string | number = newInteractionId;
 
       if (reader) {
+        let receivedResult = false;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -204,32 +307,46 @@ export const useAppLogic = () => {
               const eventType = payload.event;
               const eventData = payload.data || {};
 
+              if (eventType === "result") receivedResult = true;
+
+              // Update activeId BEFORE queuing the state update.
+              // This must be outside setInteractions because React Strict Mode
+              // double-invokes updater functions — side effects inside updaters
+              // corrupt the variable on the second run.
+              const prevActiveId = activeId;
+              if (eventType === "query_id") {
+                activeId = eventData.id;
+              }
+
               setInteractions((prev) =>
                 prev.map((i) => {
-                  if (i.id !== newInteractionId) return i;
+                  // For query_id, match on the OLD id (prevActiveId)
+                  // For everything else, match on the current activeId
+                  const matchId = eventType === "query_id" ? prevActiveId : activeId;
+                  if (i.id !== matchId) return i;
                   const updatedInteraction = { ...i };
 
-                  if (eventType === "status") {
+                  if (eventType === "query_id") {
+                    updatedInteraction.id = eventData.id;
+                  } else if (eventType === "status") {
                     updatedInteraction.status = eventData.message;
                   } else if (eventType === "tool") {
                     if (eventData.name === "execute_read_only_sql") {
-                      updatedInteraction.status = `SQL: ${eventData.args?.query || ""}`;
+                      updatedInteraction.status = `Executing database query...`;
                     } else {
                       updatedInteraction.status = `Tool: ${eventData.name}`;
                     }
-                  } else if (eventType === "report" || eventType === "result") {
+                  } else if (eventType === "report" || eventType === "result" || eventType === "delta") {
                     const prevReport = updatedInteraction.result?.report || "";
-                    const newReport =
-                      eventData.report || eventData.content || "";
-                    const isDone = eventType === "result";
+                    const newContent = eventData.report || eventData.content || "";
+                    const isDelta = eventType === "delta";
+
+                    const updatedReport = isDelta ? prevReport + newContent : newContent || prevReport;
 
                     updatedInteraction.result = {
                       ...(updatedInteraction.result || {}),
                       ...eventData,
-                      report:
-                        isDone && !newReport
-                          ? prevReport
-                          : newReport || prevReport,
+                      report: updatedReport,
                     };
                   } else if (eventType === "error") {
                     const errorMsg =
@@ -251,6 +368,40 @@ export const useAppLogic = () => {
             }
           }
         }
+
+        // --- Fallback: If SSE closed without receiving a result event ---
+        // (race condition: worker published before SSE connected, or stream was cut)
+        // Immediately poll history to get the completed result from DB.
+        if (!receivedResult) {
+          try {
+            const sessionIdForFetch = currentSessionId;
+            const data = await api.fetchHistory(sessionIdForFetch);
+            const mappedData = data.map((item: any, idx: number) => ({
+              ...item,
+              id: item.id || `hist-${idx}-${Date.now()}`,
+              session_id: String(item.session_id || "default"),
+            }));
+
+            setInteractions((prev) => {
+              const updated = [...prev];
+              mappedData.forEach((newItem: any) => {
+                const idx = updated.findIndex((i) => i.id === newItem.id || 
+                  (i.id === activeId && String(newItem.session_id) === String(sessionIdForFetch)));
+                if (idx !== -1) {
+                  const existingItem = updated[idx];
+                  const wasIncomplete = !existingItem.result || existingItem.result.execution_time === 0;
+                  const isNowComplete = newItem.result && newItem.result.execution_time !== 0;
+                  if (wasIncomplete && isNowComplete) {
+                    updated[idx] = newItem;
+                  }
+                }
+              });
+              return updated;
+            });
+          } catch (err) {
+            console.error("Fallback history fetch failed", err);
+          }
+        }
       }
     } catch (error: any) {
       if (error.name === "AbortError") return;
@@ -260,7 +411,10 @@ export const useAppLogic = () => {
           i.id === newInteractionId
             ? {
                 ...i,
-                result: { report: `An error occurred: ${error.message}` },
+                result: { 
+                  report: `An error occurred: ${error.message}`,
+                  execution_time: 0.1 // Signal completion to UI
+                },
               }
             : i,
         ),
@@ -282,5 +436,7 @@ export const useAppLogic = () => {
     handleDeleteSession,
     handleStop,
     handleQuery,
+    savedPrompts,
+    setSavedPrompts,
   };
 };
