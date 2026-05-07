@@ -15,7 +15,7 @@ from deepagents import create_deep_agent
 
 from analytics.models import QueryHistory
 from analytics.schemas import AnalyticsRequest, AnalyticsResponse
-from analytics.services.agent import (
+from analytics.services.agent.runner import (
     StreamResult,
     auto_generate_chart,
     build_messages,
@@ -24,7 +24,7 @@ from analytics.services.agent import (
     init_llm,
     stream_agent,
 )
-from analytics.services.db import (
+from analytics.services.database.connection import (
     build_engine_args,
     create_database,
     detect_active_schema,
@@ -32,11 +32,11 @@ from analytics.services.db import (
     discover_tables,
     normalize_db_uri,
 )
-from analytics.services.llm_config import get_model_config
+from analytics.services.llm import get_model_config
 from analytics.services.logger import RequestContext, get_logger
 from analytics.services.prompts import SYSTEM_PROMPT
 from analytics.services.tokens import count_tokens, estimate_query_budget
-from analytics.services.tools import create_tools
+from analytics.services.agent.tools import create_tools
 
 logger = get_logger("pipeline")
 

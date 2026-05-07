@@ -8,7 +8,7 @@ import functools
 
 import tiktoken
 
-from analytics.services.llm_config import ModelConfig
+from analytics.services.llm import ModelConfig
 
 
 @functools.lru_cache(maxsize=8)

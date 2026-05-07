@@ -14,7 +14,7 @@ from langchain.tools import tool
 from sqlalchemy import inspect, text
 
 from analytics.services.logger import get_logger
-from analytics.services.security import validate_sql
+from analytics.services.database.security import validate_sql
 from analytics.services.status import send_status
 
 logger = get_logger("tools")
