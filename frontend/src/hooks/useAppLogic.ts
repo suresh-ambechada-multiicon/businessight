@@ -18,20 +18,24 @@ export const useAppLogic = () => {
     localStorage.setItem("currentSessionId", currentSessionId);
   }, [currentSessionId]);
 
-  // Fetch session list on mount (fast — no heavy data)
+  // Fetch session list and saved prompts on mount
   useEffect(() => {
-    const fetchSessions = async () => {
+    const fetchInitialData = async () => {
       try {
-        const data = await api.fetchSessions();
-        const mapped: Session[] = data.map((s: any) => ({
+        const [sessionsData, promptsData] = await Promise.all([
+          api.fetchSessions(),
+          api.fetchSavedPrompts()
+        ]);
+        
+        const mapped: Session[] = sessionsData.map((s: any) => ({
           id: String(s.id),
           title: s.title || "New Chat",
           count: s.count || 0,
           last_activity: s.last_activity || "",
         }));
         setSessions(mapped);
+        setSavedPrompts(promptsData);
 
-        // Select persisted session or most recent
         const persistedSid = localStorage.getItem("currentSessionId");
         const sessionExists = mapped.some((s) => s.id === persistedSid);
 
@@ -41,21 +45,11 @@ export const useAppLogic = () => {
           setCurrentSessionId(mapped[0].id);
         }
       } catch (error) {
-        console.error("Failed to fetch sessions", error);
+        console.error("Failed to fetch initial data", error);
       }
     };
 
-    const fetchSavedPrompts = async () => {
-      try {
-        const data = await api.fetchSavedPrompts();
-        setSavedPrompts(data);
-      } catch (error) {
-        console.error("Failed to fetch saved prompts", error);
-      }
-    };
-
-    fetchSessions();
-    fetchSavedPrompts();
+    fetchInitialData();
   }, []);
 
   // Load history for current session (lazy — only when session changes)
@@ -96,24 +90,30 @@ export const useAppLogic = () => {
     }
   }, [currentSessionId, loadSessionHistory]);
 
-  // Poll history if there are any incomplete interactions.
-  // Uses a ref to avoid putting `interactions` in the dep array (which causes
-  // an infinite re-render loop: setInteractions -> deps change -> new interval).
-  const needsPollingRef = useRef(false);
-
-  useEffect(() => {
-    needsPollingRef.current = interactions.some(
-      (i) =>
-        String(i.session_id) === String(currentSessionId) &&
-        (!i.result || i.result.execution_time === 0)
-    );
-  }, [interactions, currentSessionId]);
-
+  // Poll history only when there are incomplete interactions
   useEffect(() => {
     if (!currentSessionId) return;
 
-    const interval = setInterval(async () => {
-      if (!needsPollingRef.current) return; // Skip poll if nothing is incomplete
+    const hasIncomplete = interactions.some(
+      (i) =>
+        String((i as any).session_id) === String(currentSessionId) &&
+        (!i.result || i.result.execution_time === 0)
+    );
+
+    if (!hasIncomplete) return;
+
+    const pollInterval = setInterval(async () => {
+      // Check again before making request
+      const stillHasIncomplete = interactions.some(
+        (i) =>
+          String((i as any).session_id) === String(currentSessionId) &&
+          (!i.result || i.result.execution_time === 0)
+      );
+      
+      if (!stillHasIncomplete) {
+        clearInterval(pollInterval);
+        return;
+      }
 
       try {
         const data = await api.fetchHistory(currentSessionId);
@@ -160,10 +160,10 @@ export const useAppLogic = () => {
       } catch (error) {
         console.error("Polling history failed", error);
       }
-    }, 4000);
+    }, 3000);
 
-    return () => clearInterval(interval);
-  }, [currentSessionId]); // Only re-create interval when session changes
+    return () => clearInterval(pollInterval);
+  }, [currentSessionId, interactions]);
 
   const handleNewChat = useCallback(() => {
     const newId = Date.now().toString();

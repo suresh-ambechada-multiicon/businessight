@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, memo } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { MainContent } from "./components/MainContent";
 import { RightSidebar } from "./components/RightSidebar";
@@ -13,19 +13,14 @@ function App() {
       (localStorage.getItem("theme") as "light" | "dark" | "system") || "light"
     );
   });
-  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">(
-    "light",
-  );
+  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">("light");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isManagePromptsOpen, setIsManagePromptsOpen] = useState(false);
 
-  // Settings State
   const [model, setModel] = useState(
     () => localStorage.getItem("model") || "google_genai:gemini-2.5-flash",
   );
-  const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem("apiKey") || "",
-  );
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("apiKey") || "");
   const [dbUrl, setDbUrl] = useState(() => localStorage.getItem("dbUrl") || "");
 
   const {
@@ -42,10 +37,8 @@ function App() {
     setSavedPrompts,
   } = useAppLogic();
 
-  // Theme effect
   useEffect(() => {
     localStorage.setItem("theme", theme);
-
     const applyTheme = () => {
       let isDark = theme === "dark";
       if (theme === "system") {
@@ -54,9 +47,7 @@ function App() {
       setEffectiveTheme(isDark ? "dark" : "light");
       document.body.classList.toggle("dark", isDark);
     };
-
     applyTheme();
-
     if (theme === "system") {
       const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
       const handleChange = () => applyTheme();
@@ -65,23 +56,25 @@ function App() {
     }
   }, [theme]);
 
-  // Sync settings to localStorage
   useEffect(() => {
     localStorage.setItem("model", model);
     localStorage.setItem("apiKey", apiKey);
     localStorage.setItem("dbUrl", dbUrl);
   }, [model, apiKey, dbUrl]);
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     setTheme((t) => {
       if (t === "light") return "dark";
       if (t === "dark") return "system";
       return "light";
     });
-  };
+  }, []);
 
-  // Sessions come from the hook now (loaded from /sessions/ endpoint)
-  // Ensure current session always appears in the list
+  const openSettings = useCallback(() => setIsSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setIsSettingsOpen(false), []);
+  const openManagePrompts = useCallback(() => setIsManagePromptsOpen(true), []);
+  const closeManagePrompts = useCallback(() => setIsManagePromptsOpen(false), []);
+
   const displaySessions = useMemo(() => {
     const list = [...sessions];
     if (!list.find((s) => s.id === currentSessionId)) {
@@ -91,11 +84,13 @@ function App() {
   }, [sessions, currentSessionId]);
 
   const currentInteractions = useMemo(
-    () =>
-      interactions.filter(
-        (i) => (i.session_id || "default") === currentSessionId,
-      ),
+    () => interactions.filter((i) => (i as any).session_id === currentSessionId),
     [interactions, currentSessionId],
+  );
+
+  const handleQueryWrapper = useCallback(
+    (q: string, d?: string, pName?: string) => handleQuery(q, model, apiKey, dbUrl, d, pName),
+    [handleQuery, model, apiKey, dbUrl],
   );
 
   return (
@@ -103,17 +98,17 @@ function App() {
       <Sidebar
         theme={theme}
         toggleTheme={toggleTheme}
-        openSettings={() => setIsSettingsOpen(true)}
+        openSettings={openSettings}
         sessions={displaySessions}
         currentSessionId={currentSessionId}
         onSelectSession={setCurrentSessionId}
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
-        openManagePrompts={() => setIsManagePromptsOpen(true)}
+        openManagePrompts={openManagePrompts}
       />
 
       <MainContent
-        onQuery={(q, d, pName) => handleQuery(q, model, apiKey, dbUrl, d, pName)}
+        onQuery={handleQueryWrapper}
         onStop={handleStop}
         isLoading={isLoading}
         interactions={currentInteractions}
@@ -126,7 +121,7 @@ function App() {
 
       <SettingsModal
         isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={closeSettings}
         model={model}
         setModel={setModel}
         apiKey={apiKey}
@@ -137,7 +132,7 @@ function App() {
 
       <ManagePromptsModal
         isOpen={isManagePromptsOpen}
-        onClose={() => setIsManagePromptsOpen(false)}
+        onClose={closeManagePrompts}
         savedPrompts={savedPrompts}
         setSavedPrompts={setSavedPrompts}
       />
@@ -145,4 +140,4 @@ function App() {
   );
 }
 
-export default App;
+export default memo(App);

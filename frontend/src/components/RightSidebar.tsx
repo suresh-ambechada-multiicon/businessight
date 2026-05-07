@@ -1,39 +1,35 @@
-import React from "react";
+import { memo, useCallback, useMemo } from "react";
 import { FileText } from "lucide-react";
 
 interface RightSidebarProps {
   interactions: any[];
 }
 
-export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
-  // Extract reports
-  const reports = interactions
-    .map((interaction, index) => {
-      if (
-        interaction.result &&
-        interaction.result.report &&
-        !interaction.result.report.includes("_Analysis cancelled by user._")
-      ) {
-        return {
-          id: interaction.id || index,
-          title: interaction.query,
-          // Extract a short preview of the text, removing markdown characters like *, #
-          summary:
-            interaction.result.report.replace(/[*#]/g, "").substring(0, 100) +
-            "...",
-          elementId: `interaction-${interaction.id || index}`,
-        };
-      }
-      return null;
-    })
-    .filter((report): report is NonNullable<typeof report> => report !== null);
+export const RightSidebar = memo(function RightSidebar({ interactions }: RightSidebarProps) {
+  const reports = useMemo(() => {
+    return interactions
+      .filter(
+        (interaction) =>
+          interaction.result?.report &&
+          !interaction.result.report.includes("_Analysis cancelled by user._")
+      )
+      .map((interaction, index) => ({
+        id: interaction.id || index,
+        title: interaction.query,
+        elementId: `interaction-${interaction.id || index}`,
+      }));
+  }, [interactions]);
 
-  const scrollToInteraction = (elementId: string) => {
+  const scrollToInteraction = useCallback((elementId: string) => {
     const element = document.getElementById(elementId);
     if (element) {
       element.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  };
+  }, []);
+
+  const handleScroll = useCallback((elementId: string) => {
+    scrollToInteraction(elementId);
+  }, [scrollToInteraction]);
 
   if (reports.length === 0) {
     return (
@@ -57,11 +53,11 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
       </div>
       <div className="sidebar-content right-sidebar-content">
         <div className="chat-list">
-          {reports.map((report: any, idx) => (
+          {reports.map((report, idx) => (
             <div
               key={report.id}
               className="history-item report-outline-item"
-              onClick={() => scrollToInteraction(report.elementId)}
+              onClick={() => handleScroll(report.elementId)}
             >
               <div className="history-item-text report-outline-title">
                 {idx + 1}. {report.title}
@@ -72,4 +68,4 @@ export const RightSidebar: React.FC<RightSidebarProps> = ({ interactions }) => {
       </div>
     </div>
   );
-};
+});

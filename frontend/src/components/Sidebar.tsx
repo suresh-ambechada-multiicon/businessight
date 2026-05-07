@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo, useCallback } from "react";
 import { ConfirmModal } from "./ConfirmModal";
 import {
   Sun,
@@ -28,7 +28,7 @@ interface SidebarProps {
   openManagePrompts: () => void;
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   theme,
   toggleTheme,
   openSettings,
@@ -40,6 +40,23 @@ export function Sidebar({
   openManagePrompts,
 }: SidebarProps) {
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
+
+  const handleDeleteClick = useCallback((e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setDeleteSessionId(sessionId);
+  }, []);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (deleteSessionId) {
+      onDeleteSession(deleteSessionId);
+      setDeleteSessionId(null);
+    }
+  }, [deleteSessionId, onDeleteSession]);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeleteSessionId(null);
+  }, []);
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -78,10 +95,7 @@ export function Sidebar({
                 <Trash2
                   size={14}
                   className="delete-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteSessionId(session.id);
-                  }}
+                  onClick={(e) => handleDeleteClick(e, session.id)}
                 />
               </button>
             ))
@@ -114,14 +128,9 @@ export function Sidebar({
         isOpen={!!deleteSessionId}
         title="Delete Chat?"
         message="Are you sure you want to delete this chat? This action cannot be undone."
-        onCancel={() => setDeleteSessionId(null)}
-        onConfirm={() => {
-          if (deleteSessionId) {
-            onDeleteSession(deleteSessionId);
-            setDeleteSessionId(null);
-          }
-        }}
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
       />
     </aside>
   );
-}
+});
