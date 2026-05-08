@@ -705,10 +705,9 @@ details[open]>.raw-data-summary {
 }
 
 .status-label {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 70%;
+    overflow: visible;
+    word-break: break-word;
+    flex: 1;
 }
 
 .status-text-bubble {
@@ -1306,12 +1305,18 @@ details[open]>.raw-data-summary {
 
 /* Delete button */
 .delete-btn {
-    opacity: 0.4;
-    transition: opacity var(--transition-fast);
+    opacity: 0;
+    pointer-events: none;
+    transition: all var(--transition-fast);
+}
+
+.delete-btn:hover {
+    color: #ef4444;
 }
 
 .history-item:hover .delete-btn {
     opacity: 1;
+    pointer-events: auto;
 }
 
 /* Report Outline */

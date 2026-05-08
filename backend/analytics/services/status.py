@@ -48,6 +48,6 @@ def send_status(task_id: str, message: str):
             maxlen=500,
         )
         # Refresh heartbeat to signal worker is still alive
-        r.setex(f"heartbeat:{task_id}", 60, "alive")
+        r.setex(f"heartbeat:{task_id}", 300, "alive")
     except Exception as e:
         logger.debug(f"Status stream write failed: {e}")

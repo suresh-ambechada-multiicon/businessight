@@ -85,11 +85,9 @@ export const Sidebar = memo(function Sidebar({
               <button
                 key={session.id}
                 className={`history-item ${session.id === currentSessionId ? "active" : ""}`}
+                onClick={() => onSelectSession(session.id)}
               >
-                <span
-                  className="history-item-text history-item-text-full"
-                  onClick={() => onSelectSession(session.id)}
-                >
+                <span className="history-item-text history-item-text-full">
                   {session.title}
                 </span>
                 <Trash2

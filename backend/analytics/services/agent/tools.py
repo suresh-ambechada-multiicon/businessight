@@ -95,12 +95,12 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     }
 
     # Dynamic row limit
-    max_rows = 1000
+    max_rows = 2000
     if token_budget:
         available = token_budget.get("available_for_tools", 100000)
         tokens_per_row = 150
         usable_budget = int(available * 0.7)
-        max_rows = max(20, min(1000, usable_budget // tokens_per_row))
+        max_rows = max(20, min(2000, usable_budget // tokens_per_row))
 
     _ctx = ctx.to_dict() if ctx else {}
     _task_id = ctx.task_id if ctx else ""

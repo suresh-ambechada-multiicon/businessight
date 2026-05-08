@@ -161,12 +161,19 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
     history_entry = None
     try:
         # ── 6. Create Agent ─────────────────────────────────────────────
-        agent = create_deep_agent(
-            model=llm,
-            tools=tools,
-            system_prompt=formatted_prompt,
-            response_format=AnalyticsResponse,
-        )
+        logger.info("Creating deep agent...", extra={"data": ctx.to_dict()})
+        try:
+            agent = create_deep_agent(
+                model=llm,
+                tools=tools,
+                system_prompt=formatted_prompt,
+                response_format=AnalyticsResponse,
+            )
+        except Exception as agent_err:
+            logger.error(f"Agent creation failed: {agent_err}", exc_info=True)
+            raise
+        
+        logger.info("Agent created successfully", extra={"data": ctx.to_dict()})
 
         # ── 8. Create History Record ───────────────────────────────────
         start_time = time.time()
@@ -235,15 +242,20 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             yield {"event": "status", "data": {"message": "Generating fast report..."}}
             
             fast_prompt = f"""
-            You are a data analyst. The user asked: "{payload.query}"
+            You are a senior business data analyst. The user asked: "{payload.query}"
             I have already executed the database query for this.
             
             SQL Executed: {payload.direct_sql}
             Result Row Count: {len(raw_data)}
-            Result Sample: {str(raw_data[:5])}
+            Result Sample: {json.dumps(raw_data[:20])}
             
-            Provide a short markdown analytical report (minimum 3 sentences) summarizing this data. 
-            Do NOT include code blocks, just the markdown report.
+            Provide a professional, structured analytical report in Markdown.
+            - Use clear headers (e.g., ### Overview, ### Key Metrics)
+            - Analyze the data provided in the sample
+            - Mention trends, distributions, or notable items
+            - Be concise but thorough (at least 3-4 paragraphs)
+            - MUST use professional formatting (bolding, lists, headers)
+            - DO NOT include the SQL code block again
             """
             
             try:
@@ -270,12 +282,17 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             # Mock the stream_data to look like agent output
             # By providing `raw_data`, the frontend extractor will know data exists
             result_holder.data = {
+                "full_content": full_report,
                 "last_non_empty_report": full_report,
                 "tool_calls": [],
                 "raw_data": raw_data,
                 "sql_query": payload.direct_sql
             }
+            # Also populate tool_state for proper extraction
             tool_state["last_sql_query"] = payload.direct_sql
+            tool_state["last_raw_data"] = raw_data
+            tool_state["best_raw_data"] = raw_data
+            tool_state["all_sql_queries"] = [{"query": payload.direct_sql, "time": 0, "rows": len(raw_data) if raw_data else 0}]
             
         else:
             # Normal deep-agent loop
@@ -312,6 +329,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # Sanitize raw_data to ensure JSON-serializability
         def _sanitize_row(row):
+            from decimal import Decimal
             if not isinstance(row, dict):
                 return row
             clean = {}
@@ -331,12 +349,37 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         if isinstance(result["raw_data"], list):
             result["raw_data"] = [_sanitize_row(r) for r in result["raw_data"]]
 
+        # Validate data quality
+        from analytics.services.agent.data_validator import validate_query_result
+        data_validation = validate_query_result(result["raw_data"], result.get("sql_query", ""))
+        
+        # Add data quality note to report if issues found
+        if data_validation["warnings"] and result["report"]:
+            result["report"] += f"\n\n**Data Quality Note:** {data_validation['warnings'][0]}"
+
         # Token Usage Calculation
         # Output tokens: reasoning + tool calls + final report
         out_tokens = count_tokens(stream_data.get("full_content", "")) + count_tokens(stream_data.get("full_tool_args_str", ""))
         
-        # Input tokens: initial context + all tool outputs
-        tool_output_str = json.dumps(tool_state.get("best_raw_data") or [])
+        # Input tokens: initial context + all tool outputs - serialize with proper handling
+        raw_data_for_tokens = tool_state.get("best_raw_data") or []
+        # Convert datetime objects to strings for JSON serialization
+        import datetime
+        from decimal import Decimal
+        def _token_sanitize(obj):
+            if obj is None or isinstance(obj, (str, int, float, bool)):
+                return obj
+            if isinstance(obj, Decimal):
+                return float(obj)
+            if hasattr(obj, 'isoformat'):
+                return obj.isoformat()
+            if isinstance(obj, dict):
+                return {k: _token_sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [_token_sanitize(i) for i in obj]
+            return str(obj)
+        
+        tool_output_str = json.dumps(_token_sanitize(raw_data_for_tokens))
         in_tokens = budget["total_used"] + count_tokens(tool_output_str)
         
         # Add padding
@@ -410,15 +453,20 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         )
 
     except Exception as e:
+        import traceback
         err_msg = str(e)
+        full_trace = traceback.format_exc()
+        
         logger.error(
             "Pipeline error",
             exc_info=True,
             extra={
                 "data": {
                     **ctx.to_dict(),
-                    "error": err_msg,
+                    "error": err_msg[:500],  # Limit error length
+                    "error_type": type(e).__name__,
                     "elapsed_ms": ctx.elapsed_ms(),
+                    "traceback": full_trace[:1000],  # Limit traceback
                 }
             },
         )

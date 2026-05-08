@@ -189,7 +189,7 @@ export const InteractionItem = memo(
                         }
                         title={btn.title}
                       >
-                        {React.createElement(btn.icon, { size: 12 })}
+                        {React.createElement(btn.icon, { size: 16 })}
                       </button>
                     ))}
                     <div className="chart-divider" />
@@ -198,7 +198,7 @@ export const InteractionItem = memo(
                       onClick={() => setIsChartFullscreen(!isChartFullscreen)}
                       title={isChartFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
                     >
-                      {isChartFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                      {isChartFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                     </button>
                   </div>
                 </div>

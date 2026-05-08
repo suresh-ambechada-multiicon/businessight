@@ -52,7 +52,7 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
     heartbeat_key = f"heartbeat:{self.request.id}"
 
     # Signal liveness immediately
-    redis_client.setex(heartbeat_key, 60, "alive")
+    redis_client.setex(heartbeat_key, 300, "alive")
 
     def sanitize_chunk(chunk):
         """Convert non-JSON-serializable objects to serializable format."""
@@ -80,7 +80,7 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
     try:
         for chunk in process_analytics_query(payload, ctx):
             # Refresh heartbeat on every chunk
-            redis_client.setex(heartbeat_key, 60, "alive")
+            redis_client.setex(heartbeat_key, 300, "alive")
             # Sanitize chunk for JSON serialization and write to Redis Stream
             sanitized = sanitize_chunk(chunk)
             redis_client.xadd(stream_key, {"data": json.dumps(sanitized)}, maxlen=500)
@@ -95,10 +95,12 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
         _mark_history_failed(ctx.task_id, "Analysis timed out.")
 
     except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
         logger.error(
             "Task crashed",
             exc_info=True,
-            extra={"data": {**ctx.to_dict(), "error": str(e)}},
+            extra={"data": {**ctx.to_dict(), "error": str(e)[:200], "traceback": tb_str[:2000]}},
         )
         _write_error(redis_client, stream_key, f"Analysis failed: {str(e)}")
         _write_done(redis_client, stream_key, self.request.id)

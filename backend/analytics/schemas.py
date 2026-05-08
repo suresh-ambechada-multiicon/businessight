@@ -79,3 +79,7 @@ class AnalyticsResponse(BaseModel):
     chart_config: ChartConfig | None = Field(
         description="Chart JSON. Mandatory for trends/multiple values."
     )
+    sql_query: str = Field(
+        default="",
+        description="The exact SQL query that generated the data used for this report."
+    )

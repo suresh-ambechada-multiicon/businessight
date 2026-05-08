@@ -42,10 +42,10 @@ def create_sql_executor(db, tool_state, ctx, _status, _ctx, _quote_ident, _full_
             normalized_query = query.strip().lower()
             
             if normalized_query in query_cache:
-                logger.info("Tool: execute_read_only_sql (cached)", extra={**_ctx, "query_preview": query[:100]})
+                logger.info("Tool: execute_read_only_sql (cached)", extra={**_ctx, "query_preview": query[:200], "query": query})
                 return json.dumps({"cached": True, "data": query_cache[normalized_query]})
 
-            _status(f"Executing SQL: {query[:80]}...")
+            _status(f"Executing SQL: {query}")
             start = time.time()
 
             with db._engine.connect() as conn:
@@ -78,19 +78,29 @@ def create_sql_executor(db, tool_state, ctx, _status, _ctx, _quote_ident, _full_
 
             logger.info("Tool: execute_read_only_sql", extra={
                 **_ctx,
-                "query_preview": query[:100],
+                "query_preview": query[:200],
+                "query": query,  # Full query for debugging
                 "time_ms": elapsed,
                 "rows": len(data),
             })
 
-            output_str = json.dumps(data)
-            
-            # Track in state for later reference
+            # Track in state for later reference (full data for UI)
             tool_state["last_tool_call"] = "execute_read_only_sql"
             
-            return output_str
+            # Truncate data returned to the LLM to save tokens
+            # The UI will still get the full 'data' array from tool_state
+            LLM_MAX_ROWS = 50
+            if len(data) > LLM_MAX_ROWS:
+                llm_response = {
+                    "_meta": f"Result truncated. Found {len(data)} rows total. Showing first {LLM_MAX_ROWS} rows to save tokens.",
+                    "total_rows_found": len(data),
+                    "data": data[:LLM_MAX_ROWS]
+                }
+                return json.dumps(llm_response)
+            
+            return json.dumps(data)
         except Exception as e:
-            logger.error("SQL execution failed", extra={**_ctx, "query_preview": query[:300], "error": str(e)})
+            logger.error("SQL execution failed", extra={**_ctx, "query_preview": query[:500], "query": query, "error": str(e)})
             return json.dumps({"error": f"Error executing query: {str(e)}"})
 
     return execute_read_only_sql

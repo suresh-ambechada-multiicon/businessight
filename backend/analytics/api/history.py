@@ -61,7 +61,7 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
     history = list(qs.order_by("-created_at")[offset : offset + limit])
 
     now = timezone.now()
-    stale_threshold = now - timedelta(minutes=2)
+    stale_threshold = now - timedelta(minutes=6)
 
     redis_client = _get_redis()
     incomplete_items = [
@@ -80,7 +80,7 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
         for h, has_heartbeat in zip(incomplete_items, heartbeat_results):
             is_stale = h.created_at < stale_threshold
 
-            if not is_stale and h.created_at < (now - timedelta(seconds=30)):
+            if not is_stale and h.created_at < (now - timedelta(minutes=5)):
                 if not has_heartbeat:
                     is_stale = True
 

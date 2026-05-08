@@ -106,10 +106,10 @@ export const ChartDisplay = memo(({ type, config }: ChartDisplayProps) => {
   };
 
   const chartMargin = {
-    top: 10,
-    right: 20,
+    top: 40,
+    right: 30,
     left: 60,
-    bottom: (isLargeDataset || hasLongLabels) ? 90 : 60
+    bottom: (isLargeDataset || hasLongLabels) ? 40 : 60
   };
 
   const xAxisLabel = (
@@ -138,6 +138,7 @@ export const ChartDisplay = memo(({ type, config }: ChartDisplayProps) => {
     verticalAlign: "top",
     align: "center",
     iconType: "circle",
+    wrapperStyle: { paddingBottom: "20px", marginTop: "-10px" },
     className: 'chart-legend-wrapper'
   };
 
@@ -167,7 +168,7 @@ export const ChartDisplay = memo(({ type, config }: ChartDisplayProps) => {
               fill={COLORS[i % COLORS.length]}
               radius={type === "stacked-bar" ? [0, 0, 0, 0] : [4, 4, 0, 0]}
               isAnimationActive={false}
-              maxBarSize={50}
+              maxBarSize={80}
             />
           ))}
         </BarChart>
@@ -256,7 +257,7 @@ export const ChartDisplay = memo(({ type, config }: ChartDisplayProps) => {
           <Legend {...legendProps} />
           {data.datasets.map((ds: any, i: number) =>
             i === 0 ? (
-              <Bar key={ds.label} dataKey={ds.label} hide={hiddenDatasets[ds.label]} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+              <Bar key={ds.label} dataKey={ds.label} hide={hiddenDatasets[ds.label]} fill={COLORS[i % COLORS.length]} radius={[4, 4, 0, 0]} maxBarSize={80} isAnimationActive={false} />
             ) : (
               <Line key={ds.label} type="monotone" dataKey={ds.label} hide={hiddenDatasets[ds.label]} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
             )

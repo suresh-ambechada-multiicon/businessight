@@ -281,7 +281,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
         for msg, metadata in agent.stream(
             {"messages": messages},
             stream_mode="messages",
-            config={"recursion_limit": 50},  # Reasonable limit; SQL tool has its own 5-query cap
+            config={"recursion_limit": 100},  # Increased for complex analytical queries
         ):
             # Check for cancellation signal
             if cache.get(f"cancel_{session_id}"):
@@ -528,23 +528,37 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
     if isinstance(ans, dict):
         report = ans.get("report") or last_non_empty_report or ""
         chart_config = ans.get("chart_config")
-        raw_data = ans.get("raw_data") or recovered_raw_data or []
-        sql_query = (
-            combined_sql
-            or ans.get("sql_query")
-            or recovered_sql_query
-            or "No SQL queries were executed."
-        )
+        
+        # Get explicit sql_query from AI if provided, otherwise fallback
+        sql_query = ans.get("sql_query") or recovered_sql_query or ""
+        
+        # Determine the most accurate raw data
+        raw_data = ans.get("raw_data")
+        if not raw_data:
+            normalized_sql = sql_query.strip().lower()
+            if normalized_sql and normalized_sql in tool_state.get("query_cache", {}):
+                raw_data = tool_state["query_cache"][normalized_sql]
+            else:
+                raw_data = tool_state.get("last_raw_data") or []
+        
+        if not sql_query:
+            sql_query = combined_sql or "No SQL queries were executed."
     else:
         report = getattr(ans, "report", "") or last_non_empty_report or ""
         chart_config = getattr(ans, "chart_config", None)
-        raw_data = getattr(ans, "raw_data", []) or recovered_raw_data or []
-        sql_query = (
-            combined_sql
-            or getattr(ans, "sql_query", "")
-            or recovered_sql_query
-            or "No SQL queries were executed."
-        )
+        
+        sql_query = getattr(ans, "sql_query", "") or recovered_sql_query or ""
+        
+        raw_data = getattr(ans, "raw_data", [])
+        if not raw_data:
+            normalized_sql = sql_query.strip().lower()
+            if normalized_sql and normalized_sql in tool_state.get("query_cache", {}):
+                raw_data = tool_state["query_cache"][normalized_sql]
+            else:
+                raw_data = tool_state.get("last_raw_data") or []
+        
+        if not sql_query:
+            sql_query = combined_sql or "No SQL queries were executed."
 
     # Fallback for empty report
     if (not report or report.strip() == "") and full_content:
@@ -558,7 +572,29 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
             report = full_content
 
     if not report or report.strip() == "":
-        report = "The analysis was completed, but I couldn't generate a verbal summary. Please check the charts and data below."
+        # Generate a basic report from available data
+        if raw_data and isinstance(raw_data, list) and len(raw_data) > 0:
+            row_count = len(raw_data)
+            cols = list(raw_data[0].keys()) if raw_data else []
+            
+            # Check if data looks aggregated (fewer rows with numeric values)
+            is_aggregated = row_count <= 30 and any(isinstance(raw_data[0].get(c), (int, float)) for c in cols)
+            
+            if is_aggregated:
+                report = f"Analysis completed. Found {row_count} data points across columns: {', '.join(cols[:5])}"
+                if len(cols) > 5:
+                    report += f" and {len(cols) - 5} more"
+                
+                # Add basic statistics if numeric columns exist
+                num_cols = [c for c in cols if isinstance(raw_data[0].get(c), (int, float))]
+                if num_cols:
+                    report += f"\n\nNumeric columns analyzed: {', '.join(num_cols[:3])}"
+            else:
+                report = f"Query returned {row_count} records. Data columns: {', '.join(cols[:6])}"
+                if len(cols) > 6:
+                    report += f" and {len(cols) - 6} more"
+        else:
+            report = "The analysis was completed, but I couldn't generate a verbal summary. Please check the charts and data below."
 
     _ctx = ctx.to_dict() if ctx else {}
     logger.info(
