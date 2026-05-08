@@ -11,12 +11,14 @@
   },
   "dependencies": {
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/react-window": "^2.0.0",
     "axios": "^1.15.2",
     "lucide-react": "^1.14.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
+    "react-window": "^2.2.7",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1"
   },
