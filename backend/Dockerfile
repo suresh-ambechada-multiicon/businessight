@@ -2,27 +2,32 @@ FROM python:3.12-slim
 
 # Python standard env vars
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_CACHE_DIR=/home/appuser/.cache/uv
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Create non-root user
-RUN addgroup --system appgroup && adduser --system --group appuser
+# Create non-root user with home directory
+RUN addgroup --system appgroup && \
+    adduser --system --group --home /home/appuser appuser && \
+    mkdir -p /home/appuser/.cache/uv && \
+    chown -R appuser:appgroup /home/appuser
 
 WORKDIR /app
 
 # Copy uv files
 COPY pyproject.toml uv.lock ./
 
-# Add gunicorn and sync dependencies
-RUN uv add gunicorn uvicorn && uv sync --frozen --no-dev
+# Sync dependencies
+RUN uv sync --no-dev
 
 # Copy backend code
 COPY . .
+RUN rm -f .env
 
 # Set correct permissions
-RUN chown -R appuser:appgroup /app
+RUN chown -R appuser:appgroup /app /home/appuser
 
 # Drop root privileges
 USER appuser
