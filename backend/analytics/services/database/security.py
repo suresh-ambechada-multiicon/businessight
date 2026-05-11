@@ -50,21 +50,22 @@ def validate_sql(query: str, ctx=None) -> tuple[bool, str]:
     Returns (is_safe, reason).
     """
     stripped = query.strip()
+    normalized = stripped.lstrip(" \t\r\n(").upper()
 
-    if not stripped.upper().startswith("SELECT"):
+    if not (normalized.startswith("SELECT") or normalized.startswith("WITH")):
         log_data = {"query_preview": stripped[:200]}
         if ctx:
             log_data.update(ctx.to_dict())
-        logger.warning("SQL blocked: not a SELECT", extra={"data": log_data})
-        return False, "Only SELECT queries are allowed."
+        logger.warning("SQL blocked: not a read-only query", extra={"data": log_data})
+        return False, "Only read-only SELECT or CTE queries are allowed."
 
     # Layer 2: Parse AST — reject any non-SELECT statement
     try:
         parsed = sqlparse.parse(stripped)
         for statement in parsed:
             stmt_type = statement.get_type()
-            # sqlparse sometimes returns 'UNKNOWN' for complex CTEs but we still want to rely on the regex fallback
-            if stmt_type != "SELECT" and stmt_type != "UNKNOWN":
+            # sqlparse sometimes returns 'UNKNOWN' for complex CTEs; allow read-only CTEs.
+            if stmt_type not in {"SELECT", "UNKNOWN"}:
                 log_data = {
                     "query_preview": stripped[:200],
                     "blocked_statement": stmt_type,

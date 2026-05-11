@@ -14,7 +14,6 @@ export interface AnalyticsQueryPayload {
   direct_sql?: string;
   executor_model?: string | null;
   verifier_model?: string | null;
-  semantic_table_rank?: boolean;
   verify_answer?: boolean;
 }
 

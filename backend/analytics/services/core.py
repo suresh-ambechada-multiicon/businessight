@@ -17,7 +17,6 @@ from analytics.models import QueryHistory
 from analytics.schemas import AnalyticsRequest, AnalyticsResponse
 from analytics.services.agent.runner import (
     StreamResult,
-    auto_generate_chart,
     build_messages,
     build_schema_context,
     extract_final_result,
@@ -39,9 +38,68 @@ from analytics.services.tokens import count_tokens, estimate_query_budget
 from analytics.services.agent.tools import create_tools
 from analytics.services.agent.table_retrieval import rank_tables_for_query
 from analytics.services.agent.answer_verifier import verify_report_against_data
-from analytics.services.cache import get_cached_column_info
 
 logger = get_logger("pipeline")
+
+
+def _needs_report_recovery(report: str) -> bool:
+    text = (report or "").strip().lower()
+    if not text:
+        return True
+    fallback_markers = [
+        "no readable summary was produced",
+        "did not produce a readable summary",
+        "no output generated",
+    ]
+    return any(marker in text for marker in fallback_markers)
+
+
+def _recover_report_from_data(llm, query: str, sql_query: str, raw_data: list) -> str:
+    """Generate a compact fallback report when agent output is missing/unreadable."""
+    from langchain_core.messages import HumanMessage
+
+    def _safe_json(obj):
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if hasattr(obj, "isoformat"):
+            return obj.isoformat()
+        if isinstance(obj, (bytes, memoryview)):
+            return "(binary data)"
+        if isinstance(obj, dict):
+            return {str(k): _safe_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_safe_json(i) for i in obj]
+        return str(obj)
+
+    rows = raw_data if isinstance(raw_data, list) else []
+    sample = _safe_json(rows[:20])
+    prompt = (
+        "You are a senior business analyst. The main agent could not produce a final readable report.\n"
+        "Generate a concise markdown report with sections: Overview, Key Findings, Notes.\n"
+        "Rules:\n"
+        "- Use only the provided SQL result sample.\n"
+        "- Do not invent values.\n"
+        "- Mention if sample is small or partial.\n\n"
+        f"User query: {query}\n"
+        f"SQL used: {sql_query}\n"
+        f"Rows returned: {len(rows)}\n"
+        f"Result sample JSON: {json.dumps(sample)}\n"
+    )
+    try:
+        recovered = llm.invoke([HumanMessage(content=prompt)])
+        content = getattr(recovered, "content", "")
+        if isinstance(content, list):
+            content = "".join(
+                c.get("text", "") if isinstance(c, dict) else str(c) for c in content
+            )
+        text = (content or "").strip()
+        if text:
+            return text
+    except Exception:
+        logger.warning("Fallback report recovery failed", exc_info=True)
+    return ""
 
 
 def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
@@ -141,26 +199,30 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         },
     )
 
+    start_time = time.time()
+    history_entry = QueryHistory.objects.create(
+        session_id=payload.session_id,
+        query=payload.query,
+        report="Analyzing...",
+        chart_config=None,
+        raw_data=None,
+        sql_query="",
+        execution_time=0.0,
+        has_data=False,
+        task_id=ctx.task_id,
+    )
+
+    send_status(ctx.task_id, "AI is analyzing your query...")
+    yield {"event": "query_id", "data": {"id": history_entry.id}}
+    yield {"event": "status", "data": {"message": "AI is analyzing your query..."}}
+
     exec_model = payload.executor_model or payload.model
     model_config = get_model_config(exec_model)
-
-    def _column_hint_for_rank(table: str) -> str:
-        h = ctx.db_uri_hash
-        if h:
-            hit = get_cached_column_info(h, table)
-            if hit:
-                return hit
-        return table
 
     ranked_tables = rank_tables_for_query(
         usable_tables=usable_tables,
         user_query=payload.query,
-        db=db,
         db_uri_hash=ctx.db_uri_hash or "",
-        api_key=payload.api_key,
-        primary_model=payload.model,
-        semantic_table_rank=payload.semantic_table_rank,
-        column_hint_fn=_column_hint_for_rank,
     )
     skip_schema_cache = len(usable_tables) > 15
 
@@ -175,8 +237,11 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         skip_full_context_cache=skip_schema_cache,
     )
     db_dialect = detect_dialect(db_uri)
-    formatted_prompt = SYSTEM_PROMPT.format(
-        db_schema=schema_context, db_dialect=db_dialect
+    # Use .replace() so schema text cannot break templating if it contains "{" / "}".
+    formatted_prompt = (
+        SYSTEM_PROMPT.replace("{db_dialect}", str(db_dialect)).replace(
+            "{db_schema}", schema_context
+        )
     )
     messages = build_messages(payload.session_id, payload.query)
 
@@ -189,7 +254,6 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
     send_status(ctx.task_id, "Initializing AI agent...")
     llm = init_llm(exec_model, payload.api_key, payload.llm_config, ctx)
 
-    history_entry = None
     try:
         # ── 6. Create Agent ─────────────────────────────────────────────
         logger.info("Creating deep agent...", extra={"data": ctx.to_dict()})
@@ -208,22 +272,6 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # ── 8. Create History Record ───────────────────────────────────
         start_time = time.time()
-        history_entry = QueryHistory.objects.create(
-            session_id=payload.session_id,
-            query=payload.query,
-            report="Analyzing...",
-            chart_config=None,
-            raw_data=None,
-            sql_query="",
-            execution_time=0.0,
-            has_data=False,
-            task_id=ctx.task_id,
-        )
-
-        send_status(ctx.task_id, "AI is analyzing your query...")
-        yield {"event": "query_id", "data": {"id": history_entry.id}}
-        yield {"event": "status", "data": {"message": "AI is analyzing your query..."}}
-
         # ── 9. Stream Agent Execution ──────────────────────────────────
         result_holder = StreamResult()
         
@@ -249,7 +297,6 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                     "chart_config": None,
                     "raw_data": simple_result["raw_data"],
                     "sql_query": simple_result.get("sql_query", ""),
-                    "agent_trace": [{"step": "simple_query_fast_path"}],
                     "done": True,
                 }}
                 return
@@ -354,9 +401,23 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # ── 10. Extract & Finalize Result ──────────────────────────────
         result = extract_final_result(stream_data, tool_state, ctx)
-        result["chart_config"] = auto_generate_chart(
-            result["chart_config"], result["raw_data"], query=payload.query
-        )
+
+        # Final fallback: ensure we still provide a readable narrative if
+        # the model exhausted tool/call budget and returned only partial structure.
+        if _needs_report_recovery(result.get("report", "")) and result.get("raw_data"):
+            send_status(ctx.task_id, "Finalizing narrative from query results...")
+            yield {
+                "event": "status",
+                "data": {"message": "Finalizing narrative from query results..."},
+            }
+            recovered_report = _recover_report_from_data(
+                llm=llm,
+                query=payload.query,
+                sql_query=result.get("sql_query") or "",
+                raw_data=result.get("raw_data") or [],
+            )
+            if recovered_report:
+                result["report"] = recovered_report
 
         # ── 11. Final Telemetry Calculation ────────────────────────────
         exec_time = time.time() - ctx.start_time
@@ -383,23 +444,10 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         if isinstance(result["raw_data"], list):
             result["raw_data"] = [_sanitize_row(r) for r in result["raw_data"]]
 
-        # Validate data quality
-        from analytics.services.agent.data_validator import validate_query_result
-        data_validation = validate_query_result(result["raw_data"], result.get("sql_query", ""))
-        
-        # Add data quality note to report if issues found
-        if data_validation["warnings"] and result["report"]:
-            result["report"] += f"\n\n**Data Quality Note:** {data_validation['warnings'][0]}"
-
         agent_trace = list(stream_data.get("trace") or [])
         verifier_token_in = 0
         verifier_token_out = 0
-        if payload.verify_answer:
-            send_status(ctx.task_id, "Verifying report against query results...")
-            yield {
-                "event": "status",
-                "data": {"message": "Verifying report against query results..."},
-            }
+        if payload.verify_answer and ctx.elapsed_ms() < 180_000:
             verdict = verify_report_against_data(
                 report=result.get("report") or "",
                 sql_query=result.get("sql_query") or "",
@@ -418,12 +466,13 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                     "issues": verdict.get("issues") or [],
                 }
             )
-            if not verdict.get("ok") and verdict.get("issues"):
-                result["report"] += (
-                    "\n\n**Verification note:** The following claims may not be fully "
-                    "supported by the retrieved data — please validate before acting:\n- "
-                    + "\n- ".join(verdict["issues"])
-                )
+            # Do not inject verifier notes into the user-facing report.
+            # Keep verdict in trace/logs; report should stay clean and consistent.
+        elif payload.verify_answer:
+            logger.warning(
+                "Verification skipped due to elapsed time budget",
+                extra={"data": {**ctx.to_dict(), "elapsed_ms": ctx.elapsed_ms()}},
+            )
 
         # Token Usage Calculation
         # Output tokens: reasoning + tool calls + final report
@@ -500,8 +549,8 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                 "chart_config": result["chart_config"],
                 "raw_data": result["raw_data"],
                 "sql_query": result["sql_query"],
+                "result_blocks": result.get("result_blocks") or [],
                 "execution_time": exec_time,
-                "agent_trace": agent_trace,
                 "usage": {
                     "input_tokens": in_tokens,
                     "output_tokens": out_tokens,
@@ -522,7 +571,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                     "raw_data_rows": len(result["raw_data"])
                     if isinstance(result["raw_data"], list)
                     else 0,
-                    "has_chart": result["chart_config"] is not None,
+                    "has_chart": bool(result.get("chart_config")),
                     "sql_queries_count": len(tool_state.get("all_sql_queries", [])),
                     "connect_time_ms": connect_time,
                     "discover_time_ms": discover_time,

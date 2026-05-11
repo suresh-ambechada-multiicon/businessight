@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, Literal, List
 
 from pydantic import BaseModel, Field
 
@@ -28,15 +28,8 @@ class AnalyticsRequest(BaseModel):
             "Defaults to `model`. A fast/cheap model is usually enough."
         ),
     )
-    semantic_table_rank: bool = Field(
-        default=True,
-        description=(
-            "When true and the catalog is large, rank tables with keyword overlap plus "
-            "embeddings (Google/OpenAI only) to surface query-relevant tables in schema context."
-        ),
-    )
     verify_answer: bool = Field(
-        default=True,
+        default=False,
         description="When true, run a short LLM pass to flag unsupported claims in the report vs. result data.",
     )
     db_url: str = Field(
@@ -91,6 +84,15 @@ class ChartConfig(BaseModel):
     )
 
 
+class ResultBlock(BaseModel):
+    kind: Literal["text", "summary", "chart", "table"]
+    title: str | None = None
+    text: str | None = None
+    sql_query: str | None = None
+    chart_config: ChartConfig | None = None
+    raw_data: list[dict[str, Any]] | None = None
+
+
 class AnalyticsResponse(BaseModel):
     report: str = Field(
         description=(
@@ -107,4 +109,11 @@ class AnalyticsResponse(BaseModel):
     sql_query: str = Field(
         default="",
         description="The exact SQL query that generated the data used for this report."
+    )
+    result_blocks: list[ResultBlock] = Field(
+        default_factory=list,
+        description=(
+            "Optional ordered output blocks for future multi-part responses. "
+            "Use when the answer needs text, chart, and table sections interleaved."
+        ),
     )

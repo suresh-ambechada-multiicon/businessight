@@ -175,17 +175,6 @@ export function SettingsModal({
         <label className="settings-checkbox-row">
           <input
             type="checkbox"
-            checked={tempAgent.semanticTableRank}
-            onChange={(e) =>
-              setTempAgent((a) => ({ ...a, semanticTableRank: e.target.checked }))
-            }
-          />
-          <span>Semantic table ranking for large catalogs</span>
-        </label>
-
-        <label className="settings-checkbox-row">
-          <input
-            type="checkbox"
             checked={tempAgent.verifyAnswer}
             onChange={(e) => setTempAgent((a) => ({ ...a, verifyAnswer: e.target.checked }))}
           />

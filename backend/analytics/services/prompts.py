@@ -53,7 +53,7 @@ The database dialect is '{db_dialect}'. Use appropriate syntax.
 
 **FINAL QUERY CONTRACT (CRITICAL):**
 - Avoid running many exploratory queries (e.g. multiple TOP 10 probes). Use schema tools first.
-- Once you have the correct SQL that answers the user, run it exactly once using `execute_final_sql(query)`.\n  This marks the dataset as the final source of truth for the report + chart.\n  Do NOT mix results from different queries in one report.
+- Once you have the correct SQL that answers the user, run it exactly once using `execute_final_sql(query)`.\n  This marks the dataset as the final source of truth for the report + chart.\n  If the result says it was truncated, DO NOT query again. Accept the truncation and output the report immediately.\n  Do NOT mix results from different queries in one report.
 - Always return human-readable dimension names (JOIN/lookup) for any `*_id` you group by.\n  Example: supplier-wise analysis must output `supplier_name` not `supplier_id`.
 - For analytical questions, keep to one final aggregation query unless the user explicitly asks for multiple views.
 - Prefer one clean result set with month, category, and metric columns over several partial query passes.
@@ -158,12 +158,15 @@ The user query type determines your response format:
 - `sql_query`: The exact SQL query you used to fetch the final data you are reporting on.
 - `result_blocks`: Optional ordered blocks when you need to interleave narrative, summary, chart, and raw table output.
   Use this for multi-part answers so the UI can render text, then chart/table, then more text in the same order.
+  For each block, include `sql_query` for the dataset used by that block.
 
 **OUTPUT CONTRACT FOR MULTI-PART ANSWERS:**
 - Keep the answer aligned to the user query.
 - Do not invent chart data or summary statistics.
 - If the query calls for more than one view, return blocks in sequence with short narrative between them.
 - Prefer the final SQL result as the source of truth for every table and chart block.
+- For every `chart` or `table` block, the `sql_query` must point to the same dataset used for that block.
+- Do NOT attach a chart from one SQL query with table rows from another SQL query.
 - For supplier-wise monthly analysis, return:
   1. A short summary block with the business takeaway.
   2. A chart block for month-over-month supplier trend.

@@ -319,8 +319,27 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
         for msg, metadata in agent.stream(
             {"messages": messages},
             stream_mode="messages",
-            config={"recursion_limit": 100},  # Increased for complex analytical queries
+            # Keep the agent from looping too long (Celery soft limit is 240s).
+            # Tool call budget in `execute_read_only_sql` provides a second guard.
+            config={"recursion_limit": 30},
         ):
+            if ctx and ctx.elapsed_ms() > 210_000:
+                logger.warning(
+                    "Stream time budget reached",
+                    extra={
+                        "data": {
+                            **_ctx,
+                            "elapsed_ms": round((time.time() - stream_start) * 1000, 2),
+                        }
+                    },
+                )
+                yield {
+                    "event": "status",
+                    "data": {
+                        "message": "Time budget reached. Finalizing the best available result..."
+                    },
+                }
+                break
             # Check for cancellation signal
             if cache.get(f"cancel_{session_id}"):
                 logger.info(
@@ -457,9 +476,9 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
     except Exception as e:
         err_msg = str(e)
         # LangGraph recursion limit hit: gracefully fall through with whatever we have
-        if "GraphRecursionError" in type(e).__name__ or "recursion limit" in err_msg.lower():
+        if "GraphRecursionError" in type(e).__name__ or "recursion limit" in err_msg.lower() or "budget exceeded" in err_msg.lower():
             logger.warning(
-                "Agent hit recursion limit, using accumulated results",
+                "Agent hit limit, using accumulated results",
                 extra={"data": {**_ctx, "elapsed_ms": round((time.time() - stream_start) * 1000, 2)}},
             )
             # Don't set has_error — we have good data, just too many steps
@@ -511,6 +530,100 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
 # ── Result Extraction ───────────────────────────────────────────────────
 
 
+def _collect_chart_dicts_from_answer(ans: dict | None) -> list[dict]:
+    """
+    Normalize structured output to a list of chart config dicts.
+    Prefers ``chart_configs`` when non-empty; otherwise ``chart_config`` (dict or list).
+    """
+    if not isinstance(ans, dict):
+        return []
+    multi = ans.get("chart_configs")
+    if isinstance(multi, list) and len(multi) > 0:
+        return [c for c in multi if isinstance(c, dict) and c.get("data")]
+    single = ans.get("chart_config")
+    if isinstance(single, list):
+        return [c for c in single if isinstance(c, dict) and c.get("data")]
+    if isinstance(single, dict) and single.get("data"):
+        return [single]
+    return []
+
+
+def _normalize_sql_key(query: str) -> str:
+    return " ".join((query or "").strip().lower().split())
+
+
+def _normalize_result_blocks(
+    ans: dict | None,
+    fallback_report: str,
+    fallback_raw_data,
+    fallback_chart,
+    *,
+    fallback_sql_query: str = "",
+    query_cache: dict | None = None,
+):
+    if not isinstance(ans, dict):
+        return []
+
+    blocks = ans.get("result_blocks") or ans.get("blocks") or []
+    normalized: list[dict] = []
+    if isinstance(blocks, list):
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            kind = str(block.get("kind") or "text").lower()
+            item: dict = {
+                "kind": kind if kind in {"text", "summary", "chart", "table"} else "text",
+                "title": block.get("title") or None,
+            }
+            block_sql = str(block.get("sql_query") or "").strip()
+            if block_sql:
+                item["sql_query"] = block_sql
+            text = block.get("text") or block.get("report")
+            if isinstance(text, str) and text.strip():
+                item["text"] = text
+            chart = block.get("chart_config")
+            if isinstance(chart, dict) and chart.get("data"):
+                item["chart_config"] = chart
+            raw = block.get("raw_data")
+            if isinstance(raw, list):
+                item["raw_data"] = raw
+            elif block_sql and isinstance(query_cache, dict):
+                cached_rows = query_cache.get(_normalize_sql_key(block_sql))
+                if isinstance(cached_rows, list):
+                    item["raw_data"] = cached_rows
+            if item.get("text") or item.get("chart_config") or item.get("raw_data"):
+                normalized.append(item)
+
+    if normalized:
+        return normalized
+
+    single: dict = {"kind": "text", "text": fallback_report or ""}
+    if fallback_sql_query:
+        single["sql_query"] = fallback_sql_query
+    if isinstance(fallback_chart, dict) and fallback_chart.get("data"):
+        single["chart_config"] = fallback_chart
+    if isinstance(fallback_raw_data, list) and fallback_raw_data:
+        single["raw_data"] = fallback_raw_data
+    return [single] if single.get("text") or single.get("chart_config") or single.get("raw_data") else []
+
+
+def _enrich_chart_axis_labels(chart_config: dict, raw_data: list) -> None:
+    if not chart_config or not isinstance(chart_config, dict):
+        return
+    if not raw_data:
+        return
+    if not chart_config.get("x_label"):
+        keys = [k for k in raw_data[0].keys() if k != "id"]
+        chart_config["x_label"] = (
+            keys[0].replace("_", " ").title() if keys else "Items"
+        )
+    if not chart_config.get("y_label"):
+        datasets = chart_config.get("data", {}).get("datasets", [])
+        chart_config["y_label"] = (
+            datasets[0].get("label") if datasets else "Value"
+        )
+
+
 def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
     """
     Parse the accumulated stream data and tool state into the final
@@ -524,8 +637,16 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
     # Recovery data from tool execution
     # Prefer best_raw_data (largest result set) so aggregation queries don't
     # overwrite the actual list data the user wanted to see
-    recovered_raw_data = tool_state.get("best_raw_data") or tool_state.get("last_raw_data")
-    recovered_sql_query = tool_state.get("last_sql_query", "")
+    # Prefer explicit final dataset contract when available (more accurate than last/best heuristics).
+    recovered_raw_data = (
+        tool_state.get("final_raw_data")
+        or tool_state.get("best_raw_data")
+        or tool_state.get("last_raw_data")
+    )
+    recovered_sql_query = (
+        tool_state.get("final_sql_query")
+        or tool_state.get("last_sql_query", "")
+    )
 
     # Parse the structured response
     try:
@@ -559,32 +680,17 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
 
     # Combine all executed queries with their timings
     all_queries = tool_state.get("all_sql_queries", [])
+    query_cache = tool_state.get("query_cache", {}) if isinstance(tool_state, dict) else {}
     combined_sql = ""
     if all_queries:
         for i, q_info in enumerate(all_queries):
             combined_sql += f"-- Query {i + 1} (Execution Time: {q_info['time']:.3f}s)\n{q_info['query']}\n\n"
 
-    # Enrich chart_config with axis labels if missing
-    if isinstance(ans, dict):
-        chart_config = ans.get("chart_config")
-        if chart_config and isinstance(chart_config, dict):
-            raw_data = ans.get("raw_data") or recovered_raw_data or []
-            if raw_data and not chart_config.get("x_label"):
-                keys = [k for k in raw_data[0].keys() if k != "id"]
-                chart_config["x_label"] = (
-                    keys[0].replace("_", " ").title() if keys else "Items"
-                )
-            if raw_data and not chart_config.get("y_label"):
-                datasets = chart_config.get("data", {}).get("datasets", [])
-                chart_config["y_label"] = (
-                    datasets[0].get("label") if datasets else "Value"
-                )
-            ans["chart_config"] = chart_config
+    chart_list = _collect_chart_dicts_from_answer(ans if isinstance(ans, dict) else None)
 
     # Extract fields
     if isinstance(ans, dict):
         report = ans.get("report") or last_non_empty_report or ""
-        chart_config = ans.get("chart_config")
         
         # Get explicit sql_query from AI if provided, otherwise fallback
         sql_query = ans.get("sql_query") or recovered_sql_query or ""
@@ -592,30 +698,85 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
         # Determine the most accurate raw data
         raw_data = ans.get("raw_data")
         if not raw_data:
-            normalized_sql = sql_query.strip().lower()
-            if normalized_sql and normalized_sql in tool_state.get("query_cache", {}):
-                raw_data = tool_state["query_cache"][normalized_sql]
+            normalized_sql = _normalize_sql_key(sql_query)
+            if normalized_sql and normalized_sql in query_cache:
+                raw_data = query_cache[normalized_sql]
             else:
-                raw_data = tool_state.get("last_raw_data") or []
+                raw_data = recovered_raw_data or tool_state.get("last_raw_data") or []
         
         if not sql_query:
             sql_query = combined_sql or "No SQL queries were executed."
     else:
         report = getattr(ans, "report", "") or last_non_empty_report or ""
-        chart_config = getattr(ans, "chart_config", None)
+        chart_list = []
+        cm = getattr(ans, "chart_configs", None)
+        if isinstance(cm, list) and cm:
+            chart_list = [c for c in cm if isinstance(c, dict) and c.get("data")]
+        if not chart_list:
+            cs = getattr(ans, "chart_config", None)
+            if isinstance(cs, list):
+                chart_list = [c for c in cs if isinstance(c, dict) and c.get("data")]
+            elif isinstance(cs, dict) and cs.get("data"):
+                chart_list = [cs]
         
         sql_query = getattr(ans, "sql_query", "") or recovered_sql_query or ""
         
         raw_data = getattr(ans, "raw_data", [])
         if not raw_data:
-            normalized_sql = sql_query.strip().lower()
-            if normalized_sql and normalized_sql in tool_state.get("query_cache", {}):
-                raw_data = tool_state["query_cache"][normalized_sql]
+            normalized_sql = _normalize_sql_key(sql_query)
+            if normalized_sql and normalized_sql in query_cache:
+                raw_data = query_cache[normalized_sql]
             else:
-                raw_data = tool_state.get("last_raw_data") or []
+                raw_data = recovered_raw_data or tool_state.get("last_raw_data") or []
         
         if not sql_query:
             sql_query = combined_sql or "No SQL queries were executed."
+
+    # Enrich axis labels for each chart using the resolved row sample
+    raw_for_charts = (
+        raw_data
+        if isinstance(raw_data, list) and raw_data
+        else (recovered_raw_data if isinstance(recovered_raw_data, list) else [])
+    )
+    for ch in chart_list:
+        if isinstance(ch, dict):
+            _enrich_chart_axis_labels(ch, raw_for_charts)
+
+    if len(chart_list) == 0:
+        chart_storage = None
+    elif len(chart_list) == 1:
+        chart_storage = chart_list[0]
+    else:
+        chart_storage = chart_list
+
+    if chart_storage is None and isinstance(raw_data, list) and len(raw_data) >= 2:
+        chart_storage = auto_generate_chart(None, raw_data, query=sql_query or report or "")
+
+    result_blocks = _normalize_result_blocks(
+        ans if isinstance(ans, dict) else None,
+        fallback_report=report,
+        fallback_raw_data=raw_data,
+        fallback_chart=chart_storage,
+        fallback_sql_query=sql_query,
+        query_cache=query_cache,
+    )
+
+    if not report and result_blocks:
+        text_parts = [
+            str(block.get("text") or "").strip()
+            for block in result_blocks
+            if isinstance(block, dict) and str(block.get("text") or "").strip()
+        ]
+        if text_parts:
+            report = "\n\n".join(text_parts)
+
+    # Regex extraction fallback if JSON parsing failed completely
+    if (not report or report.strip() == "") and full_tool_args_str:
+        import re
+        # Look for "report": "..." allowing nested quotes if they are escaped (heuristic)
+        match = re.search(r'"report"\s*:\s*"(.+?)"(?:\s*,\s*"\w+"\s*:|\s*})', full_tool_args_str, re.DOTALL | re.IGNORECASE)
+        if match:
+            report = match.group(1).replace("\\n", "\n").replace('\\"', '"')
 
     # Fallback for empty report
     if (not report or report.strip() == "") and full_content:
@@ -629,29 +790,17 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
             report = full_content
 
     if not report or report.strip() == "":
-        # Generate a basic report from available data
         if raw_data and isinstance(raw_data, list) and len(raw_data) > 0:
-            row_count = len(raw_data)
-            cols = list(raw_data[0].keys()) if raw_data else []
-            
-            # Check if data looks aggregated (fewer rows with numeric values)
-            is_aggregated = row_count <= 30 and any(isinstance(raw_data[0].get(c), (int, float)) for c in cols)
-            
-            if is_aggregated:
-                report = f"Analysis completed. Found {row_count} data points across columns: {', '.join(cols[:5])}"
-                if len(cols) > 5:
-                    report += f" and {len(cols) - 5} more"
-                
-                # Add basic statistics if numeric columns exist
-                num_cols = [c for c in cols if isinstance(raw_data[0].get(c), (int, float))]
-                if num_cols:
-                    report += f"\n\nNumeric columns analyzed: {', '.join(num_cols[:3])}"
-            else:
-                report = f"Query returned {row_count} records. Data columns: {', '.join(cols[:6])}"
-                if len(cols) > 6:
-                    report += f" and {len(cols) - 6} more"
+            cols = list(raw_data[0].keys())
+            report = (
+                f"### Query returned {len(raw_data)} rows\n\n"
+                f"Fields: {', '.join(cols[:8])}"
+            )
+            if len(cols) > 8:
+                report += f" and {len(cols) - 8} more"
+            report += "\n\nThe AI did not produce a readable summary for this result set."
         else:
-            report = "The analysis was completed, but I couldn't generate a verbal summary. Please check the charts and data below."
+            report = "The analysis completed, but no readable summary was produced."
 
     _ctx = ctx.to_dict() if ctx else {}
     logger.info(
@@ -662,16 +811,17 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
                 "report_length": len(report),
                 "raw_data_rows": len(raw_data) if isinstance(raw_data, list) else 0,
                 "sql_queries_count": len(all_queries),
-                "has_chart": chart_config is not None,
+                "has_chart": chart_storage is not None,
             }
         },
     )
 
     return {
         "report": report,
-        "chart_config": chart_config,
+        "chart_config": chart_storage,
         "raw_data": raw_data,
         "sql_query": sql_query,
+        "result_blocks": result_blocks,
     }
 
 
@@ -765,10 +915,11 @@ def _validate_chart_config(chart_config: dict | None, raw_data: list | None) -> 
     return chart_config
 
 
-def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
+def auto_generate_chart(chart_config, raw_data, query="") -> dict | list | None:
     """
     Fallback chart generation when the AI doesn't produce one.
-    
+    Accepts a single chart dict, a list of chart dicts (multi-chart reports), or None.
+
     KEY PRINCIPLE: Only auto-generate charts from AGGREGATED data (few rows 
     with clear categories + numeric values). NEVER chart raw individual records
     (e.g. 1000 agent rows) — that data belongs in the data grid, not a chart.
@@ -776,6 +927,24 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
     The AI should generate chart_config itself for analytical queries since
     only the AI understands what the user asked for.
     """
+    if isinstance(chart_config, list):
+        out: list[dict] = []
+        for item in chart_config:
+            if not isinstance(item, dict):
+                continue
+            one = _auto_generate_single_chart(item, raw_data, query)
+            if one:
+                out.append(one)
+        if len(out) > 1:
+            return out
+        if len(out) == 1:
+            return out[0]
+        return None
+    return _auto_generate_single_chart(chart_config, raw_data, query)
+
+
+def _auto_generate_single_chart(chart_config, raw_data, query="") -> dict | None:
+    """Validate or synthesize one chart from ``raw_data``."""
     # First validate any AI-generated chart
     if chart_config and isinstance(chart_config, dict):
         data_obj = chart_config.get("data", {})
@@ -793,11 +962,113 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
     if not raw_data or not isinstance(raw_data, list) or len(raw_data) < 2:
         return None
 
-    # Detect if data is aggregated vs individual records
-    num_rows = len(raw_data)
-
     try:
         all_keys = list(raw_data[0].keys())
+
+        # Prefer time-series + category multi-series when shape looks like:
+        # (time/month/date) + (category/company/supplier) + (numeric metric)
+        def _is_time_key(k: str) -> bool:
+            kl = k.lower()
+            return any(x in kl for x in ("month", "date", "time", "day", "year", "week"))
+
+        def _is_time_val(v) -> bool:
+            if v is None:
+                return False
+            if hasattr(v, "isoformat"):
+                return True
+            if isinstance(v, str):
+                s = v.strip()
+                return len(s) >= 7 and (s[4] == "-" or "t" in s.lower())
+            return False
+
+        time_key = next((k for k in all_keys if _is_time_key(k)), None)
+        if not time_key:
+            for k in all_keys:
+                if _is_id_or_key_column(k):
+                    continue
+                if _is_time_val(raw_data[0].get(k)):
+                    time_key = k
+                    break
+
+        # Category key: prefer human-readable string columns. If none, allow id-like ints
+        # (e.g. supplier_id) so we still plot multi-series by supplier.
+        cat_key = next(
+            (
+                k
+                for k in all_keys
+                if k != time_key
+                and not _is_id_or_key_column(k)
+                and isinstance(raw_data[0].get(k), str)
+            ),
+            None,
+        )
+        if not cat_key:
+            cat_key = next(
+                (
+                    k
+                    for k in all_keys
+                    if k != time_key
+                    and k.lower().endswith("_id")
+                    and isinstance(raw_data[0].get(k), (int, float))
+                ),
+                None,
+            )
+
+        value_key = next(
+            (
+                k
+                for k in all_keys
+                if k not in (time_key, cat_key)
+                and not _is_id_or_key_column(k)
+                and isinstance(raw_data[0].get(k), (int, float, Decimal))
+                and not _is_flag_or_boolean_column(
+                    k, [row.get(k) for row in raw_data[:50]]
+                )
+            ),
+            None,
+        )
+
+        if time_key and cat_key and value_key:
+            # Build labels by time, datasets by top categories
+            def _time_str(v) -> str:
+                if v is None:
+                    return ""
+                if hasattr(v, "isoformat"):
+                    return v.isoformat()
+                return str(v)
+
+            times = sorted({ _time_str(r.get(time_key)) for r in raw_data if r.get(time_key) is not None })
+            times = [t for t in times if t][:30]
+            if len(times) >= 2:
+                totals: dict[str, float] = {}
+                for r in raw_data:
+                    c = str(r.get(cat_key, "") or "")
+                    if not c:
+                        continue
+                    totals[c] = totals.get(c, 0.0) + float(r.get(value_key, 0) or 0)
+                top_cats = [k for k, _ in sorted(totals.items(), key=lambda x: x[1], reverse=True)[:6]]
+
+                # map (time, cat) -> value
+                grid: dict[tuple[str, str], float] = {}
+                for r in raw_data:
+                    t = _time_str(r.get(time_key))
+                    c = str(r.get(cat_key, "") or "")
+                    if t in times and c in top_cats:
+                        grid[(t, c)] = grid.get((t, c), 0.0) + float(r.get(value_key, 0) or 0)
+
+                datasets = []
+                for c in top_cats:
+                    pts = [grid.get((t, c), 0.0) for t in times]
+                    if len(set(pts)) > 1:
+                        datasets.append({"label": c, "data": pts})
+
+                if datasets:
+                    return {
+                        "type": "line",
+                        "x_label": time_key.replace("_", " ").title(),
+                        "y_label": value_key.replace("_", " ").title(),
+                        "data": {"labels": times, "datasets": datasets},
+                    }
 
         # Find label key (first non-ID string column)
         label_key = None
@@ -874,4 +1145,3 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | None:
         chart_config = None
 
     return chart_config
-

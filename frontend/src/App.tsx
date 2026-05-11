@@ -23,15 +23,13 @@ function loadAgentOptions(): AnalyticsAgentOptions {
     return {
       executorModel: localStorage.getItem("executorModel") || "",
       verifierModel: localStorage.getItem("verifierModel") || "",
-      semanticTableRank: readStoredBool("semanticTableRank", true),
-      verifyAnswer: readStoredBool("verifyAnswer", true),
+      verifyAnswer: readStoredBool("verifyAnswer", false),
     };
   } catch {
     return {
       executorModel: "",
       verifierModel: "",
-      semanticTableRank: true,
-      verifyAnswer: true,
+      verifyAnswer: false,
     };
   }
 }
@@ -95,7 +93,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem("executorModel", agentOptions.executorModel);
     localStorage.setItem("verifierModel", agentOptions.verifierModel);
-    localStorage.setItem("semanticTableRank", String(agentOptions.semanticTableRank));
     localStorage.setItem("verifyAnswer", String(agentOptions.verifyAnswer));
   }, [agentOptions]);
 

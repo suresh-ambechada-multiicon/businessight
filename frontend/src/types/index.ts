@@ -1,6 +1,20 @@
 /** Persisted tool / verification steps from the analytics agent (history API). */
 export type AgentTraceEntry = Record<string, unknown>;
 
+export interface ResultBlock {
+  kind: "text" | "summary" | "chart" | "table";
+  title?: string;
+  text?: string;
+  sql_query?: string;
+  chart_config?: {
+    type: string;
+    x_label?: string;
+    y_label?: string;
+    data: any;
+  };
+  raw_data?: any[];
+}
+
 export interface Interaction {
   id?: number | string;
   session_id?: string;
@@ -22,7 +36,6 @@ export interface Interaction {
 export interface AnalyticsAgentOptions {
   executorModel: string;
   verifierModel: string;
-  semanticTableRank: boolean;
   verifyAnswer: boolean;
 }
 
@@ -38,6 +51,7 @@ export interface InteractionResult {
   raw_data?: any[];
   has_data?: boolean;
   execution_time?: number;
+  result_blocks?: ResultBlock[];
 }
 
 export interface Session {

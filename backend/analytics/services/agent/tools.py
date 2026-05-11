@@ -87,11 +87,27 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
             return f"SELECT TOP {n} {columns} FROM {table} {extra}".strip()
         return f"SELECT {columns} FROM {table} {extra} LIMIT {n}".strip()
 
+    table_count = len(usable_tables or [])
+    if table_count > 150:
+        sql_call_limit = 12
+    elif table_count > 50:
+        sql_call_limit = 10
+    else:
+        sql_call_limit = 8
+
     tool_state = {
         "last_sql_query": "",
         "last_raw_data": None,
         "best_raw_data": None,
         "all_sql_queries": [],
+        # Hard cap to prevent the agent from thrashing on SQL calls
+        # and exceeding Celery soft time limits.
+        "sql_call_count": 0,
+        "sql_call_limit": sql_call_limit,
+        # Final dataset contract (used by extraction to avoid picking wrong query output)
+        "final_sql_query": "",
+        "final_raw_data": None,
+        "final_query_reason": "",
     }
 
     # Dynamic row limit
@@ -110,9 +126,15 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         send_status(_task_id, msg)
 
     # Create all tools
+    sql_tools = create_sql_executor(
+        db, tool_state, ctx, _status, _ctx, _quote_ident, _full_table, _select_top, max_rows
+    )
+    if not isinstance(sql_tools, list):
+        sql_tools = [sql_tools]
+
     tools = [
         # Core database tools
-        create_sql_executor(db, tool_state, ctx, _status, _ctx, _quote_ident, _full_table, _select_top, max_rows),
+        *sql_tools,
         create_table_info_tool(db, ctx, _status, _ctx, _quote_ident, _full_table),
         create_schema_search_tool(db, usable_tables, ctx, _status, _ctx),
         create_table_stats_tool(db, ctx, _status, _ctx, _full_table, _quote_ident),

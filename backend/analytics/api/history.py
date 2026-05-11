@@ -113,10 +113,42 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
             "result": {
                 "report": report,
                 "chart_config": h.chart_config,
-                "raw_data": [],
+                "raw_data": h.raw_data[:1000] if h.raw_data else [],
                 "sql_query": h.sql_query,
                 "execution_time": exec_time,
                 "has_data": bool(h.raw_data and len(h.raw_data) > 0),
+                "result_blocks": [
+                    *(
+                        [
+                            {
+                                "kind": "text",
+                                "text": report,
+                            }
+                        ]
+                        if report
+                        else []
+                    ),
+                    *(
+                        [
+                            {
+                                "kind": "chart",
+                                "chart_config": h.chart_config,
+                            }
+                        ]
+                        if h.chart_config
+                        else []
+                    ),
+                    *(
+                        [
+                            {
+                                "kind": "table",
+                                "raw_data": h.raw_data[:1000],
+                            }
+                        ]
+                        if h.raw_data
+                        else []
+                    ),
+                ],
             },
             "usage": {
                 "input_tokens": h.input_tokens or 0,

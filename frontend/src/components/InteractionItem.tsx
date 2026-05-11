@@ -18,7 +18,6 @@ import {
   Save,
   Command,
   Code,
-  ListTree,
 } from "lucide-react";
 import type { Interaction, SavedPrompt } from "../types";
 import { ReportDisplay } from "./ReportDisplay";
@@ -65,6 +64,27 @@ export const InteractionItem = memo(
   }: InteractionItemProps) => {
     const result = interaction.result;
     const currentChartType = chartOverrides[idx] || result?.chart_config?.type;
+    const displayBlocks = React.useMemo(() => {
+      if (!result) return [];
+      const blocks =
+        result.result_blocks && result.result_blocks.length > 0
+          ? result.result_blocks
+          : [
+              {
+                kind: "text" as const,
+                text: result.report,
+                chart_config: result.chart_config,
+                raw_data: result.raw_data,
+              },
+            ];
+      const hasTextBlock = blocks.some(
+        (b) => typeof b?.text === "string" && b.text.trim().length > 0,
+      );
+      if (!hasTextBlock && typeof result.report === "string" && result.report.trim()) {
+        return [{ kind: "text" as const, text: result.report }, ...blocks];
+      }
+      return blocks;
+    }, [result]);
     const [isChartFullscreen, setIsChartFullscreen] = useState(false);
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 
@@ -87,7 +107,7 @@ export const InteractionItem = memo(
       setIsSaveModalOpen(true);
     };
 
-    return (
+  return (
       <div
         id={`interaction-${interaction.id || idx}`}
         className="interaction-wrapper"
@@ -110,43 +130,91 @@ export const InteractionItem = memo(
         {result && result.report && result.report !== "Analyzing..." ? (
           <div className="chat-message ai-message">
             <div className="message-content">
+              {displayBlocks.map((block, blockIdx) => (
+                <React.Fragment key={`${interaction.id || idx}-block-${blockIdx}`}>
+                  {block.title && <div className="report-block-title">{block.title}</div>}
+                  {block.text && (
+                    <div className="report-text markdown-content">
+                      <ReportDisplay text={block.text} />
+                    </div>
+                  )}
+                  {block.chart_config && (
+                    <div className={`chart-wrapper-premium ${isChartFullscreen ? 'fullscreen' : ''}`}>
+                      <div className="chart-body">
+                        <ChartDisplay
+                          type={currentChartType || block.chart_config.type || "bar"}
+                          config={block.chart_config}
+                        />
+                      </div>
+                      <div className="chart-toolbar">
+                        {CHART_TYPES.map((btn) => (
+                          <button
+                            key={btn.type}
+                            className={`chart-tool-btn ${currentChartType === btn.type ? "active" : ""}`}
+                            onClick={() =>
+                              setChartOverrides((prev) => ({
+                                ...prev,
+                                [idx]: btn.type,
+                              }))
+                            }
+                            title={btn.title}
+                          >
+                            {React.createElement(btn.icon, { size: 16 })}
+                          </button>
+                        ))}
+                        <div className="chart-divider" />
+                        <button
+                          className="chart-tool-btn"
+                          onClick={() => setIsChartFullscreen(!isChartFullscreen)}
+                          title={isChartFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                        >
+                          {isChartFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {block.raw_data && block.raw_data.length > 0 && (
+                    <RawDataTable
+                      data={block.raw_data}
+                      hasData={true}
+                      queryId={interaction.id}
+                    />
+                  )}
+                </React.Fragment>
+              ))}
 
-
-              <div className="report-text markdown-content">
-                <ReportDisplay text={result.report} />
-                <div className="report-meta">
-                  {result.execution_time && result.execution_time > 0 && (
+              <div className="report-meta">
+                {result.execution_time && result.execution_time > 0 && (
+                  <span className="report-meta-item">
+                    <Clock size={14} /> {formatTime(result.execution_time)}
+                  </span>
+                )}
+                {result.execution_time && result.execution_time < 0 && (
+                  <span className="report-meta-item interrupted">
+                    <Clock size={14} /> Interrupted
+                  </span>
+                )}
+                {interaction.usage && (
+                  <>
                     <span className="report-meta-item">
-                      <Clock size={14} /> {formatTime(result.execution_time)}
+                      <Download size={14} /> In:{" "}
+                      {interaction.usage.input_tokens.toLocaleString()}
                     </span>
-                  )}
-                  {result.execution_time && result.execution_time < 0 && (
-                    <span className="report-meta-item interrupted">
-                      <Clock size={14} /> Interrupted
+                    <span className="report-meta-item">
+                      <Upload size={14} /> Out:{" "}
+                      {interaction.usage.output_tokens.toLocaleString()}
                     </span>
-                  )}
-                  {interaction.usage && (
-                    <>
-                      <span className="report-meta-item">
-                        <Download size={14} /> In:{" "}
-                        {interaction.usage.input_tokens.toLocaleString()}
-                      </span>
-                      <span className="report-meta-item">
-                        <Upload size={14} /> Out:{" "}
-                        {interaction.usage.output_tokens.toLocaleString()}
-                      </span>
-                    </>
-                  )}
-                  {result.sql_query && (
-                    <button
-                      onClick={handleSavePrompt}
-                      title="Save as Prompt"
-                      className="save-prompt-btn"
-                    >
-                      <Save size={14} /> Save Prompt
-                    </button>
-                  )}
-                </div>
+                  </>
+                )}
+                {result.sql_query && (
+                  <button
+                    onClick={handleSavePrompt}
+                    title="Save as Prompt"
+                    className="save-prompt-btn"
+                  >
+                    <Save size={14} /> Save Prompt
+                  </button>
+                )}
               </div>
 
               {result.sql_query && result.sql_query !== "No SQL queries were executed." && (
@@ -161,63 +229,6 @@ export const InteractionItem = memo(
                 </details>
               )}
 
-              {interaction.agent_trace && interaction.agent_trace.length > 0 && (
-                <details className="sql-accordion agent-trace-accordion">
-                  <summary>
-                    <ListTree size={12} className="sql-icon" />
-                    Agent trace
-                  </summary>
-                  <div className="sql-content-wrapper">
-                    <pre className="agent-trace-json">
-                      {JSON.stringify(interaction.agent_trace, null, 2)}
-                    </pre>
-                  </div>
-                </details>
-              )}
-
-              {(result.raw_data?.length || 0) > 0 || result.has_data ? (
-                <RawDataTable
-                  data={result.raw_data || []}
-                  hasData={result.has_data}
-                  queryId={interaction.id}
-                />
-              ) : null}
-
-              {result.chart_config && (
-                <div className={`chart-wrapper-premium ${isChartFullscreen ? 'fullscreen' : ''}`}>
-                  <div className="chart-body">
-                    <ChartDisplay
-                      type={currentChartType || "bar"}
-                      config={result.chart_config}
-                    />
-                  </div>
-                  <div className="chart-toolbar">
-                    {CHART_TYPES.map((btn) => (
-                      <button
-                        key={btn.type}
-                        className={`chart-tool-btn ${currentChartType === btn.type ? "active" : ""}`}
-                        onClick={() =>
-                          setChartOverrides((prev) => ({
-                            ...prev,
-                            [idx]: btn.type,
-                          }))
-                        }
-                        title={btn.title}
-                      >
-                        {React.createElement(btn.icon, { size: 16 })}
-                      </button>
-                    ))}
-                    <div className="chart-divider" />
-                    <button
-                      className="chart-tool-btn"
-                      onClick={() => setIsChartFullscreen(!isChartFullscreen)}
-                      title={isChartFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
-                    >
-                      {isChartFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         ) : (

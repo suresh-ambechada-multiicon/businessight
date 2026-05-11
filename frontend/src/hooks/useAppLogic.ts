@@ -29,6 +29,8 @@ export const useAppLogic = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const loadedSessionsRef = useRef<Set<string>>(new Set());
   const resumeStreamControllersRef = useRef(new Map<string, AbortController>());
+  const interactionsRef = useRef<Interaction[]>([]);
+  const pollingIntervalRef = useRef<number | null>(null);
   /** Same Celery task_id as handleQuery's live stream — resume effect must not double-connect */
   const activeSubmitTaskIdRef = useRef<string | null>(null);
 
@@ -42,9 +44,17 @@ export const useAppLogic = () => {
   }, [interactions, currentSessionId]);
 
   useEffect(() => {
+    interactionsRef.current = interactions;
+  }, [interactions]);
+
+  useEffect(() => {
     return () => {
       resumeStreamControllersRef.current.forEach((ac) => ac.abort());
       resumeStreamControllersRef.current.clear();
+      if (pollingIntervalRef.current !== null) {
+        window.clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
     };
   }, [currentSessionId]);
 
@@ -165,28 +175,40 @@ export const useAppLogic = () => {
     }
   }, [currentSessionId, loadSessionHistory]);
 
-  // Poll history only when there are incomplete interactions
+  // Poll history only when there are incomplete interactions.
+  // Use refs to avoid restarting polling on every interactions update.
   useEffect(() => {
     if (!currentSessionId) return;
 
-    const hasIncomplete = interactions.some(
+    const hasIncomplete = interactionsRef.current.some(
       (i) =>
         String((i as any).session_id) === String(currentSessionId) &&
         (!i.result || i.result.execution_time === 0)
     );
 
-    if (!hasIncomplete) return;
+    if (!hasIncomplete) {
+      if (pollingIntervalRef.current !== null) {
+        window.clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      return;
+    }
 
-    const pollInterval = setInterval(async () => {
+    if (pollingIntervalRef.current !== null) return;
+
+    pollingIntervalRef.current = window.setInterval(async () => {
       // Check again before making request
-      const stillHasIncomplete = interactions.some(
+      const stillHasIncomplete = interactionsRef.current.some(
         (i) =>
           String((i as any).session_id) === String(currentSessionId) &&
           (!i.result || i.result.execution_time === 0)
       );
       
       if (!stillHasIncomplete) {
-        clearInterval(pollInterval);
+        if (pollingIntervalRef.current !== null) {
+          window.clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
         return;
       }
 
@@ -238,8 +260,13 @@ export const useAppLogic = () => {
       }
     }, 3000);
 
-    return () => clearInterval(pollInterval);
-  }, [currentSessionId, interactions]);
+    return () => {
+      if (pollingIntervalRef.current !== null) {
+        window.clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [currentSessionId, inflightResumeKey]);
 
   const handleNewChat = useCallback(() => {
     const newId = Date.now().toString();
@@ -343,7 +370,6 @@ export const useAppLogic = () => {
         api_key: apiKey,
         db_url: dbUrl,
         session_id: currentSessionId,
-        semantic_table_rank: agentOptions.semanticTableRank,
         verify_answer: agentOptions.verifyAnswer,
       };
       if (directSql) {
