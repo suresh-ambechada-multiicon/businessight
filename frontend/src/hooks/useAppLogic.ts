@@ -1,6 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { api } from "../api/api";
 import type { Interaction, Session } from "../types";
+import {
+  clearInflightStorage,
+  drainAnalysisSseStream,
+  rememberInflightTask,
+} from "./analysisStream";
+
+function isAnalysisIncomplete(i: Interaction): boolean {
+  const r = i.result;
+  if (r == null) return true;
+  const t = r.execution_time;
+  if (t === -1 || t === -1.0) return false;
+  if (t === undefined || t === null) return true;
+  return t === 0 || t === 0.0;
+}
 
 export const useAppLogic = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
@@ -13,6 +27,65 @@ export const useAppLogic = () => {
   
   const abortControllerRef = useRef<AbortController | null>(null);
   const loadedSessionsRef = useRef<Set<string>>(new Set());
+  const resumeStreamControllersRef = useRef(new Map<string, AbortController>());
+  /** Same Celery task_id as handleQuery's live stream — resume effect must not double-connect */
+  const activeSubmitTaskIdRef = useRef<string | null>(null);
+
+  const inflightResumeKey = useMemo(() => {
+    return interactions
+      .filter((i) => String(i.session_id) === String(currentSessionId))
+      .filter((i) => Boolean(i.task_id) && isAnalysisIncomplete(i))
+      .map((i) => `${i.task_id}:${i.id}`)
+      .sort()
+      .join("|");
+  }, [interactions, currentSessionId]);
+
+  useEffect(() => {
+    return () => {
+      resumeStreamControllersRef.current.forEach((ac) => ac.abort());
+      resumeStreamControllersRef.current.clear();
+    };
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    if (!inflightResumeKey || !currentSessionId) return;
+    const pairs = inflightResumeKey.split("|").filter(Boolean);
+    const wantedTasks = new Set(
+      pairs.map((p) => p.split(":")[0]).filter(Boolean) as string[],
+    );
+
+    resumeStreamControllersRef.current.forEach((ac, tid) => {
+      if (!wantedTasks.has(tid)) {
+        ac.abort();
+        resumeStreamControllersRef.current.delete(tid);
+      }
+    });
+
+    for (const p of pairs) {
+      const colon = p.indexOf(":");
+      if (colon === -1) continue;
+      const taskId = p.slice(0, colon);
+      const idStr = p.slice(colon + 1);
+      if (!taskId || !idStr) continue;
+      if (resumeStreamControllersRef.current.has(taskId)) continue;
+      if (activeSubmitTaskIdRef.current === taskId) continue;
+
+      const interactionId = /^\d+$/.test(idStr) ? Number(idStr) : idStr;
+      const ac = new AbortController();
+      resumeStreamControllersRef.current.set(taskId, ac);
+
+      void drainAnalysisSseStream({
+        taskId,
+        signal: ac.signal,
+        initialActiveId: interactionId,
+        sessionIdForHistoryFallback: currentSessionId,
+        setInteractions,
+        setIsLoading,
+      }).finally(() => {
+        resumeStreamControllersRef.current.delete(taskId);
+      });
+    }
+  }, [inflightResumeKey, currentSessionId]);
 
   useEffect(() => {
     localStorage.setItem("currentSessionId", currentSessionId);
@@ -62,6 +135,7 @@ export const useAppLogic = () => {
         ...item,
         id: item.id || `hist-${idx}-${Date.now()}`,
         session_id: String(item.session_id || "default"),
+        task_id: item.task_id ?? null,
       }));
 
       loadedSessionsRef.current.add(sessionId);
@@ -121,6 +195,7 @@ export const useAppLogic = () => {
           ...item,
           id: item.id || `hist-${idx}-${Date.now()}`,
           session_id: String(item.session_id || "default"),
+          task_id: item.task_id ?? null,
         }));
 
         setInteractions((prev) => {
@@ -272,136 +347,36 @@ export const useAppLogic = () => {
       }
       
       const response = await api.submitQuery(payload);
-
       const taskId = response.task_id;
-      const streamResponse = await api.streamResults(taskId, controller.signal);
+      activeSubmitTaskIdRef.current = taskId;
+      rememberInflightTask(taskId, currentSessionId);
 
-      if (!streamResponse.ok)
-        throw new Error(`HTTP error! status: ${streamResponse.status}`);
+      setInteractions((prev) =>
+        prev.map((i) =>
+          i.id === newInteractionId ? { ...i, task_id: taskId } : i,
+        ),
+      );
 
-      const reader = streamResponse.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let activeId: string | number = newInteractionId;
-
-      if (reader) {
-        let receivedResult = false;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            if (!trimmedLine || !trimmedLine.startsWith("data: ")) continue;
-
-            try {
-              const payload = JSON.parse(trimmedLine.slice(6));
-              const eventType = payload.event;
-              const eventData = payload.data || {};
-
-              if (eventType === "result") receivedResult = true;
-
-              // Update activeId BEFORE queuing the state update.
-              // This must be outside setInteractions because React Strict Mode
-              // double-invokes updater functions — side effects inside updaters
-              // corrupt the variable on the second run.
-              const prevActiveId = activeId;
-              if (eventType === "query_id") {
-                activeId = eventData.id;
-              }
-
-              setInteractions((prev) =>
-                prev.map((i) => {
-                  // For query_id, match on the OLD id (prevActiveId)
-                  // For everything else, match on the current activeId
-                  const matchId = eventType === "query_id" ? prevActiveId : activeId;
-                  if (i.id !== matchId) return i;
-                  const updatedInteraction = { ...i };
-
-                  if (eventType === "query_id") {
-                    updatedInteraction.id = eventData.id;
-                  } else if (eventType === "status") {
-                    updatedInteraction.status = eventData.message;
-                  } else if (eventType === "tool") {
-                    if (eventData.name === "execute_read_only_sql") {
-                      updatedInteraction.status = `Executing database query...`;
-                    } else {
-                      updatedInteraction.status = `Tool: ${eventData.name}`;
-                    }
-                  } else if (eventType === "report" || eventType === "result" || eventType === "delta") {
-                    const prevReport = updatedInteraction.result?.report || "";
-                    const newContent = eventData.report || eventData.content || "";
-                    const isDelta = eventType === "delta";
-
-                    const updatedReport = isDelta ? prevReport + newContent : newContent || prevReport;
-
-                    updatedInteraction.result = {
-                      ...(updatedInteraction.result || {}),
-                      ...eventData,
-                      report: updatedReport,
-                    };
-                  } else if (eventType === "error") {
-                    const errorMsg =
-                      eventData.error || eventData.message || "Unknown error";
-                    updatedInteraction.status = `Error: ${errorMsg}`;
-                    setIsLoading(false);
-                    if (!updatedInteraction.result) {
-                      updatedInteraction.result = { report: errorMsg } as any;
-                    }
-                  } else if (eventType === "usage") {
-                    updatedInteraction.usage = eventData;
-                  }
-
-                  return updatedInteraction;
-                }),
-              );
-            } catch (e) {
-              console.error("Error parsing stream chunk", e, trimmedLine);
-            }
-          }
-        }
-
-        // --- Fallback: If SSE closed without receiving a result event ---
-        // (race condition: worker published before SSE connected, or stream was cut)
-        // Immediately poll history to get the completed result from DB.
-        if (!receivedResult) {
-          try {
-            const sessionIdForFetch = currentSessionId;
-            const data = await api.fetchHistory(sessionIdForFetch);
-            const mappedData = data.map((item: any, idx: number) => ({
-              ...item,
-              id: item.id || `hist-${idx}-${Date.now()}`,
-              session_id: String(item.session_id || "default"),
-            }));
-
-            setInteractions((prev) => {
-              const updated = [...prev];
-              mappedData.forEach((newItem: any) => {
-                const idx = updated.findIndex((i) => i.id === newItem.id || 
-                  (i.id === activeId && String(newItem.session_id) === String(sessionIdForFetch)));
-                if (idx !== -1) {
-                  const existingItem = updated[idx];
-                  const wasIncomplete = !existingItem.result || existingItem.result.execution_time === 0;
-                  const isNowComplete = newItem.result && newItem.result.execution_time !== 0;
-                  if (wasIncomplete && isNowComplete) {
-                    updated[idx] = newItem;
-                  }
-                }
-              });
-              return updated;
-            });
-          } catch (err) {
-            console.error("Fallback history fetch failed", err);
-          }
-        }
-      }
+      await drainAnalysisSseStream({
+        taskId,
+        signal: controller.signal,
+        initialActiveId: newInteractionId,
+        sessionIdForHistoryFallback: currentSessionId,
+        setInteractions,
+        setIsLoading,
+      });
+      // Defer so React can apply final `result` before resume effect may see incomplete+task_id
+      setTimeout(() => {
+        activeSubmitTaskIdRef.current = null;
+      }, 0);
     } catch (error: any) {
-      if (error.name === "AbortError") return;
+      activeSubmitTaskIdRef.current = null;
+      if (error.name === "AbortError") {
+        clearInflightStorage();
+        return;
+      }
       console.error("Query failed", error);
+      clearInflightStorage();
       setInteractions((prev) =>
         prev.map((i) =>
           i.id === newInteractionId
@@ -416,8 +391,8 @@ export const useAppLogic = () => {
         ),
       );
     } finally {
-      setIsLoading(false);
       abortControllerRef.current = null;
+      setIsLoading(false);
     }
   };
 

@@ -50,12 +50,19 @@ def create_column_values_tool(db, ctx, _status, _ctx, _full_table, _quote_ident,
                 lines.append(f"  {display_val}: {count}")
             
             if len(rows) == 50:
-                lines.append(f"  ... (showing top 50 of {len(rows)}+ values)")
+                lines.append("  ... (top 50 value groups; more distinct values may exist)")
 
             elapsed = round((time.time() - start) * 1000, 2)
-            logger.info("Tool: get_column_values failed", extra={
-                **_ctx, "table": table_name, "column": column_name, "time_ms": elapsed,
-            })
+            logger.info(
+                "Tool: get_column_values",
+                extra={
+                    **_ctx,
+                    "table": table_name,
+                    "column": column_name,
+                    "distinct_values": len(rows),
+                    "time_ms": elapsed,
+                },
+            )
             
             return "\n".join(lines)
 

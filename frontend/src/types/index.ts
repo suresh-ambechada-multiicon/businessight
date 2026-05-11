@@ -1,6 +1,8 @@
 export interface Interaction {
   id?: number | string;
   session_id?: string;
+  /** Celery task id — used to reconnect SSE after refresh while analysis still running */
+  task_id?: string | null;
   query: string;
   saved_prompt_name?: string;
   result: InteractionResult | null;

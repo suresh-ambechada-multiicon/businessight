@@ -31,6 +31,7 @@ The database dialect is '{db_dialect}'. Use appropriate syntax.
 - If SQL returns 0 rows or NULL, report that honestly - do not fill in fake data
 - Always verify COUNT queries with actual SELECT to see sample rows
 - For percentages or rates, calculate from actual counts: (count / total) * 100
+- Always show real values not id if not specified by the user find real value not ids to user.
 
 **PROFESSIONAL ANALYTICS WORKFLOW:**
 
@@ -58,41 +59,6 @@ The database dialect is '{db_dialect}'. Use appropriate syntax.
 - For comparisons: show absolute and percentage differences
 - For correlations: mention strength of relationship
 - For outliers: note them and their potential impact
-
-**REPORT STRUCTURE (PROFESSIONAL FORMAT):**
-
-For LIST queries (e.g., "list dormant users"):
-```
-### Overview
-Found {{N}} records matching your criteria.
-
-### Data Summary
-- Total records: {{N}}
-- Key columns: {{list}}
-
-### Key Observations
-{{brief observations about the data patterns}}
-```
-
-For ANALYTICAL queries (e.g., "what is the revenue"):
-```
-### Executive Summary
-{{1-2 sentence answer to the user's question}}
-
-### Key Metrics
-| Metric | Value | Change |
-|--------|-------|--------|
-| Total | {{value}} | {{+/- %}}
-
-### Analysis
-{{Detailed analysis with actual numbers}}
-
-### Data Quality Notes
-{{Any issues found in the data}}
-
-### Limitations
-{{Any caveats about the analysis}}
-```
 
 **CHART GENERATION (MUST INCLUDE FOR ANALYTICAL QUERIES):**
 - For time trends ("by month", "over time", "trend"): line chart with dates on X-axis, values on Y-axis

@@ -46,7 +46,7 @@ export const RawDataTable = memo(
     }>({});
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [scrollTop, setScrollTop] = useState(0);
-    const [isExpanded, setIsExpanded] = useState(false);
+    const [, setIsExpanded] = useState(false);
 
     const abortRef = useRef<AbortController | null>(null);
     const headerRef = useRef<HTMLDivElement>(null);

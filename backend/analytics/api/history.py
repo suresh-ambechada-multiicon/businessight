@@ -110,6 +110,7 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
                 "session_id": h.session_id,
                 "query": h.query,
                 "created_at": h.created_at.isoformat(),
+                "task_id": h.task_id,
                 "result": {
                     "report": report,
                     "chart_config": h.chart_config,
