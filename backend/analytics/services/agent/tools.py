@@ -22,41 +22,7 @@ from analytics.services.agent.tool_definitions import (
     create_correlation_tool,
     create_outlier_detection_tool,
 )
-from analytics.services.logger import get_logger
 from analytics.services.status import send_status
-
-logger = get_logger("tools")
-
-
-def is_simple_query(query: str) -> bool:
-    """
-    Fast-path detection for simple queries that don't need full AI analysis.
-    
-    Returns True if the query is simple enough to execute directly.
-    """
-    query_lower = query.lower().strip()
-    
-    # Simple SHOW/LIST queries
-    simple_patterns = [
-        "show tables",
-        "list tables",
-        "what tables",
-        "show columns",
-        "describe",
-        "schema",
-    ]
-    
-    for pattern in simple_patterns:
-        if pattern in query_lower:
-            return True
-    
-    # Single word queries asking for table/list info
-    if query_lower in ["tables", "schema", "structure"]:
-        return True
-    
-    return False
-
-
 def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     """
     Factory that creates the analytics tools bound to a specific
@@ -120,7 +86,6 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
 
     _ctx = ctx.to_dict() if ctx else {}
     _task_id = ctx.task_id if ctx else ""
-    _db_uri_hash = ctx.db_uri_hash if ctx else ""
 
     def _status(msg: str):
         send_status(_task_id, msg)

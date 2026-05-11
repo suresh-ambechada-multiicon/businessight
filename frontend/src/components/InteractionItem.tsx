@@ -17,7 +17,6 @@ import {
   Minimize2,
   Save,
   Command,
-  Code,
 } from "lucide-react";
 import type { Interaction, SavedPrompt } from "../types";
 import { ReportDisplay } from "./ReportDisplay";
@@ -217,18 +216,6 @@ export const InteractionItem = memo(
                 )}
               </div>
 
-              {result.sql_query && result.sql_query !== "No SQL queries were executed." && (
-                <details className="sql-accordion">
-                  <summary>
-                    <Code size={12} className="sql-icon" />
-                    View SQL
-                  </summary>
-                  <div className="sql-content-wrapper">
-                    <pre className="sql-code-block">{result.sql_query}</pre>
-                  </div>
-                </details>
-              )}
-
             </div>
           </div>
         ) : (
@@ -242,19 +229,10 @@ export const InteractionItem = memo(
                       size={18}
                     />
                     <span className="status-label">
-                      {interaction.status &&
-                        interaction.status.startsWith("SQL:")
-                        ? "Generating insights from database..."
-                        : interaction.status || "Analyzing..."}
+                      {interaction.status || "Analyzing..."}
                     </span>
                     <Timer className="execution-timer" />
                   </summary>
-                  {interaction.status &&
-                    interaction.status.startsWith("SQL:") && (
-                      <div className="status-text-bubble">
-                        {interaction.status.replace(/^SQL:\s*/i, "")}
-                      </div>
-                    )}
                 </details>
               </div>
             </div>

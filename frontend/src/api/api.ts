@@ -1,8 +1,15 @@
 import axios from "axios";
 
-const HOST = window.location.hostname;
-const PROTOCOL = window.location.protocol; // http: or https:
-const BASE_URL = `${PROTOCOL}//${HOST}:8000/api/v1`;
+const envBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
+const inferDefaultBaseUrl = () => {
+  const { hostname, protocol, port } = window.location;
+  const isTypicalDevPort = port === "5173" || port === "3000" || port === "4173";
+  if (isTypicalDevPort) {
+    return `${protocol}//${hostname}:8000/api/v1`;
+  }
+  return "/api/v1";
+};
+const BASE_URL = (envBaseUrl && envBaseUrl.trim()) || inferDefaultBaseUrl();
 
 /** POST /query/ body — matches backend `AnalyticsRequest` (snake_case). */
 export interface AnalyticsQueryPayload {

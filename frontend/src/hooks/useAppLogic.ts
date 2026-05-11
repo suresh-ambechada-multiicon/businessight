@@ -110,15 +110,17 @@ export const useAppLogic = () => {
           api.fetchSessions(),
           api.fetchSavedPrompts()
         ]);
+        const sessionsList = Array.isArray(sessionsData) ? sessionsData : [];
+        const promptsList = Array.isArray(promptsData) ? promptsData : [];
         
-        const mapped: Session[] = sessionsData.map((s: any) => ({
+        const mapped: Session[] = sessionsList.map((s: any) => ({
           id: String(s.id),
           title: s.title || "New Chat",
           count: s.count || 0,
           last_activity: s.last_activity || "",
         }));
         setSessions(mapped);
-        setSavedPrompts(promptsData);
+        setSavedPrompts(promptsList);
 
         const persistedSid = localStorage.getItem("currentSessionId");
         const sessionExists = mapped.some((s) => s.id === persistedSid);
@@ -142,7 +144,8 @@ export const useAppLogic = () => {
 
     try {
       const data = await api.fetchHistory(sessionId);
-      const mappedData = data.map((item: any, idx: number) => ({
+      const historyData = Array.isArray(data) ? data : [];
+      const mappedData = historyData.map((item: any, idx: number) => ({
         ...item,
         id: item.id || `hist-${idx}-${Date.now()}`,
         session_id: String(item.session_id || "default"),
@@ -183,7 +186,7 @@ export const useAppLogic = () => {
     const hasIncomplete = interactionsRef.current.some(
       (i) =>
         String((i as any).session_id) === String(currentSessionId) &&
-        (!i.result || i.result.execution_time === 0)
+        isAnalysisIncomplete(i)
     );
 
     if (!hasIncomplete) {
@@ -201,7 +204,7 @@ export const useAppLogic = () => {
       const stillHasIncomplete = interactionsRef.current.some(
         (i) =>
           String((i as any).session_id) === String(currentSessionId) &&
-          (!i.result || i.result.execution_time === 0)
+          isAnalysisIncomplete(i)
       );
       
       if (!stillHasIncomplete) {
@@ -214,7 +217,8 @@ export const useAppLogic = () => {
 
       try {
         const data = await api.fetchHistory(currentSessionId);
-        const mappedData = data.map((item: any, idx: number) => ({
+        const historyData = Array.isArray(data) ? data : [];
+        const mappedData = historyData.map((item: any, idx: number) => ({
           ...item,
           id: item.id || `hist-${idx}-${Date.now()}`,
           session_id: String(item.session_id || "default"),
@@ -229,10 +233,9 @@ export const useAppLogic = () => {
             const idx = updated.findIndex((i) => i.id === newItem.id);
             if (idx !== -1) {
               const existingItem = updated[idx];
-              const wasIncomplete =
-                !existingItem.result || existingItem.result.execution_time === 0;
+              const wasIncomplete = isAnalysisIncomplete(existingItem);
               const isNowComplete =
-                newItem.result && newItem.result.execution_time !== 0;
+                newItem.result != null && !isAnalysisIncomplete(newItem);
 
               if (wasIncomplete && isNowComplete) {
                 updated[idx] = newItem;
@@ -244,7 +247,7 @@ export const useAppLogic = () => {
               const isOptimisticMatch = updated.some(
                 (i) =>
                   i.query === newItem.query &&
-                  (!i.result || i.result.execution_time === 0)
+                  isAnalysisIncomplete(i)
               );
               if (!isOptimisticMatch) {
                 updated.push(newItem);

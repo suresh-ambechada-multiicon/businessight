@@ -21,17 +21,6 @@ class AnalyticsRequest(BaseModel):
             "Defaults to `model`. Use a stronger model for complex SQL, or a cheaper one for exploration."
         ),
     )
-    verifier_model: str | None = Field(
-        default=None,
-        description=(
-            "Optional model for post-hoc report vs. data verification. "
-            "Defaults to `model`. A fast/cheap model is usually enough."
-        ),
-    )
-    verify_answer: bool = Field(
-        default=False,
-        description="When true, run a short LLM pass to flag unsupported claims in the report vs. result data.",
-    )
     db_url: str = Field(
         default="",
         description="The connection string for the database to analyze (e.g. postgres://user:pass@host/db).",

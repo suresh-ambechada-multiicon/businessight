@@ -1,7 +1,3 @@
-from datetime import timedelta
-
-from celery.result import AsyncResult
-from django.utils import timezone
 from ninja import Router
 
 from analytics.models import QueryHistory
@@ -9,7 +5,7 @@ from analytics.services.logger import get_logger
 
 logger = get_logger("api")
 
-from analytics.api.query import _get_client_ip, _get_redis
+from analytics.api.query import _get_client_ip
 
 
 router = Router()
@@ -54,56 +50,14 @@ def get_sessions(request):
 
 @router.get("/history/")
 def get_history(request, session_id: str = None, limit: int = 200, offset: int = 0):
-    """Return history for a session, with stale-query detection."""
+    """Return history for a session."""
     qs = QueryHistory.objects.filter(is_deleted=False)
     if session_id is not None:
         qs = qs.filter(session_id=session_id)
     history = list(qs.order_by("-created_at")[offset : offset + limit])
 
-    now = timezone.now()
-    stale_threshold = now - timedelta(minutes=6)
-
-    redis_client = _get_redis()
-    incomplete_items = [
-        h
-        for h in history
-        if (not h.execution_time or h.execution_time == 0) and h.task_id
-    ]
-
-    stale_task_ids = set()
-    if incomplete_items:
-        pipe = redis_client.pipeline(transaction=False)
-        for h in incomplete_items:
-            pipe.exists(f"heartbeat:{h.task_id}")
-        heartbeat_results = pipe.execute()
-
-        for h, has_heartbeat in zip(incomplete_items, heartbeat_results):
-            is_stale = h.created_at < stale_threshold
-
-            if not is_stale and h.created_at < (now - timedelta(minutes=5)):
-                if not has_heartbeat:
-                    is_stale = True
-
-            if not is_stale:
-                task_result = AsyncResult(h.task_id)
-                if task_result.ready() and task_result.status in [
-                    "FAILURE",
-                    "REVOKED",
-                ]:
-                    is_stale = True
-
-            if is_stale:
-                stale_task_ids.add(h.task_id)
-
     res = []
     for h in history:
-        report = h.report
-        exec_time = h.execution_time or 0.0
-
-        if h.task_id and h.task_id in stale_task_ids:
-            report = "_Analysis was interrupted (server restart or process killed)._"
-            exec_time = -1.0
-
         item = {
             "id": h.id,
             "session_id": h.session_id,
@@ -111,21 +65,21 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
             "created_at": h.created_at.isoformat(),
             "task_id": h.task_id,
             "result": {
-                "report": report,
+                "report": h.report,
                 "chart_config": h.chart_config,
                 "raw_data": h.raw_data[:1000] if h.raw_data else [],
                 "sql_query": h.sql_query,
-                "execution_time": exec_time,
+                "execution_time": h.execution_time or 0.0,
                 "has_data": bool(h.raw_data and len(h.raw_data) > 0),
                 "result_blocks": [
                     *(
                         [
                             {
                                 "kind": "text",
-                                "text": report,
+                                "text": h.report,
                             }
                         ]
-                        if report
+                        if h.report
                         else []
                     ),
                     *(

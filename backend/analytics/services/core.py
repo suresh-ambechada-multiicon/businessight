@@ -7,9 +7,7 @@ Every step is logged with timing and request context.
 """
 
 import json
-import os
 import time
-from decimal import Decimal
 
 from deepagents import create_deep_agent
 
@@ -37,69 +35,13 @@ from analytics.services.prompts import SYSTEM_PROMPT
 from analytics.services.tokens import count_tokens, estimate_query_budget
 from analytics.services.agent.tools import create_tools
 from analytics.services.agent.table_retrieval import rank_tables_for_query
-from analytics.services.agent.answer_verifier import verify_report_against_data
+from analytics.services.pipeline.recovery import (
+    needs_report_recovery,
+    recover_report_from_data,
+)
+from analytics.services.pipeline.serialization import sanitize_for_tokens, sanitize_row
 
 logger = get_logger("pipeline")
-
-
-def _needs_report_recovery(report: str) -> bool:
-    text = (report or "").strip().lower()
-    if not text:
-        return True
-    fallback_markers = [
-        "no readable summary was produced",
-        "did not produce a readable summary",
-        "no output generated",
-    ]
-    return any(marker in text for marker in fallback_markers)
-
-
-def _recover_report_from_data(llm, query: str, sql_query: str, raw_data: list) -> str:
-    """Generate a compact fallback report when agent output is missing/unreadable."""
-    from langchain_core.messages import HumanMessage
-
-    def _safe_json(obj):
-        if obj is None or isinstance(obj, (str, int, float, bool)):
-            return obj
-        if isinstance(obj, Decimal):
-            return float(obj)
-        if hasattr(obj, "isoformat"):
-            return obj.isoformat()
-        if isinstance(obj, (bytes, memoryview)):
-            return "(binary data)"
-        if isinstance(obj, dict):
-            return {str(k): _safe_json(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return [_safe_json(i) for i in obj]
-        return str(obj)
-
-    rows = raw_data if isinstance(raw_data, list) else []
-    sample = _safe_json(rows[:20])
-    prompt = (
-        "You are a senior business analyst. The main agent could not produce a final readable report.\n"
-        "Generate a concise markdown report with sections: Overview, Key Findings, Notes.\n"
-        "Rules:\n"
-        "- Use only the provided SQL result sample.\n"
-        "- Do not invent values.\n"
-        "- Mention if sample is small or partial.\n\n"
-        f"User query: {query}\n"
-        f"SQL used: {sql_query}\n"
-        f"Rows returned: {len(rows)}\n"
-        f"Result sample JSON: {json.dumps(sample)}\n"
-    )
-    try:
-        recovered = llm.invoke([HumanMessage(content=prompt)])
-        content = getattr(recovered, "content", "")
-        if isinstance(content, list):
-            content = "".join(
-                c.get("text", "") if isinstance(c, dict) else str(c) for c in content
-            )
-        text = (content or "").strip()
-        if text:
-            return text
-    except Exception:
-        logger.warning("Fallback report recovery failed", exc_info=True)
-    return ""
 
 
 def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
@@ -199,7 +141,6 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         },
     )
 
-    start_time = time.time()
     history_entry = QueryHistory.objects.create(
         session_id=payload.session_id,
         query=payload.query,
@@ -270,36 +211,8 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         
         logger.info("Agent created successfully", extra={"data": ctx.to_dict()})
 
-        # ── 8. Create History Record ───────────────────────────────────
-        start_time = time.time()
         # ── 9. Stream Agent Execution ──────────────────────────────────
         result_holder = StreamResult()
-        
-        # Check for simple query fast-path
-        from analytics.services.agent.tools import is_simple_query
-        from analytics.services.agent.report_generator import handle_simple_query
-        
-        if is_simple_query(payload.query):
-            send_status(ctx.task_id, "Processing simple query...")
-            yield {"event": "status", "data": {"message": "Processing simple query..."}}
-            
-            simple_result = handle_simple_query(db, payload.query, usable_tables)
-            if simple_result:
-                history_entry.report = simple_result["report"]
-                history_entry.raw_data = simple_result["raw_data"]
-                history_entry.sql_query = simple_result.get("sql_query", "")
-                history_entry.has_data = bool(simple_result.get("raw_data"))
-                history_entry.agent_trace = [{"step": "simple_query_fast_path"}]
-                history_entry.save()
-                
-                yield {"event": "result", "data": {
-                    "report": simple_result["report"],
-                    "chart_config": None,
-                    "raw_data": simple_result["raw_data"],
-                    "sql_query": simple_result.get("sql_query", ""),
-                    "done": True,
-                }}
-                return
         
         if getattr(payload, "direct_sql", None):
             # Fast-path for Saved Prompts: execute SQL directly and summarize
@@ -316,6 +229,22 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                 
             # Execute SQL using LangChain tool interface
             sql_result_str = sql_tool.invoke({"query": payload.direct_sql})
+            sql_tool_payload = {}
+            try:
+                sql_tool_payload = json.loads(sql_result_str) if sql_result_str else {}
+            except Exception:
+                sql_tool_payload = {}
+            if isinstance(sql_tool_payload, dict) and sql_tool_payload.get("error"):
+                err = str(sql_tool_payload.get("error"))
+                logger.warning(
+                    "Direct SQL fast-path execution failed",
+                    extra={"data": {**ctx.to_dict(), "error": err[:500]}},
+                )
+                yield {"event": "error", "data": {"message": err}}
+                history_entry.report = f"Error: {err}"
+                history_entry.execution_time = 0.1
+                history_entry.save()
+                return
             raw_data = tool_state.get("best_raw_data") or tool_state.get("last_raw_data") or []
             
             send_status(ctx.task_id, "Generating fast report...")
@@ -401,16 +330,15 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # ── 10. Extract & Finalize Result ──────────────────────────────
         result = extract_final_result(stream_data, tool_state, ctx)
-
         # Final fallback: ensure we still provide a readable narrative if
         # the model exhausted tool/call budget and returned only partial structure.
-        if _needs_report_recovery(result.get("report", "")) and result.get("raw_data"):
+        if needs_report_recovery(result.get("report", "")) and result.get("raw_data"):
             send_status(ctx.task_id, "Finalizing narrative from query results...")
             yield {
                 "event": "status",
                 "data": {"message": "Finalizing narrative from query results..."},
             }
-            recovered_report = _recover_report_from_data(
+            recovered_report = recover_report_from_data(
                 llm=llm,
                 query=payload.query,
                 sql_query=result.get("sql_query") or "",
@@ -422,58 +350,10 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         # ── 11. Final Telemetry Calculation ────────────────────────────
         exec_time = time.time() - ctx.start_time
 
-        # Sanitize raw_data to ensure JSON-serializability
-        def _sanitize_row(row):
-            from decimal import Decimal
-            if not isinstance(row, dict):
-                return row
-            clean = {}
-            for k, v in row.items():
-                if isinstance(v, (bytes, memoryview)):
-                    clean[k] = "(binary data)"
-                elif isinstance(v, Decimal):
-                    clean[k] = float(v)
-                elif hasattr(v, "isoformat"):
-                    clean[k] = v.isoformat()
-                elif isinstance(v, (str, int, float, bool)) or v is None:
-                    clean[k] = v
-                else:
-                    clean[k] = str(v)
-            return clean
-
         if isinstance(result["raw_data"], list):
-            result["raw_data"] = [_sanitize_row(r) for r in result["raw_data"]]
+            result["raw_data"] = [sanitize_row(r) for r in result["raw_data"]]
 
         agent_trace = list(stream_data.get("trace") or [])
-        verifier_token_in = 0
-        verifier_token_out = 0
-        if payload.verify_answer and ctx.elapsed_ms() < 180_000:
-            verdict = verify_report_against_data(
-                report=result.get("report") or "",
-                sql_query=result.get("sql_query") or "",
-                raw_data_sample=result.get("raw_data") or [],
-                verifier_model=payload.verifier_model or payload.model,
-                api_key=payload.api_key,
-                llm_config=payload.llm_config,
-                ctx=ctx,
-            )
-            verifier_token_in = int(verdict.get("verifier_input_tokens") or 0)
-            verifier_token_out = int(verdict.get("verifier_output_tokens") or 0)
-            agent_trace.append(
-                {
-                    "step": "verification",
-                    "consistent": verdict.get("ok"),
-                    "issues": verdict.get("issues") or [],
-                }
-            )
-            # Do not inject verifier notes into the user-facing report.
-            # Keep verdict in trace/logs; report should stay clean and consistent.
-        elif payload.verify_answer:
-            logger.warning(
-                "Verification skipped due to elapsed time budget",
-                extra={"data": {**ctx.to_dict(), "elapsed_ms": ctx.elapsed_ms()}},
-            )
-
         # Token Usage Calculation
         # Output tokens: reasoning + tool calls + final report
         base_out_tokens = count_tokens(stream_data.get("full_content", "")) + count_tokens(
@@ -482,39 +362,21 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
         # Input tokens: initial context + all tool outputs - serialize with proper handling
         raw_data_for_tokens = tool_state.get("best_raw_data") or []
-        # Convert datetime objects to strings for JSON serialization
-        import datetime
-        from decimal import Decimal
-        def _token_sanitize(obj):
-            if obj is None or isinstance(obj, (str, int, float, bool)):
-                return obj
-            if isinstance(obj, Decimal):
-                return float(obj)
-            if hasattr(obj, 'isoformat'):
-                return obj.isoformat()
-            if isinstance(obj, dict):
-                return {k: _token_sanitize(v) for k, v in obj.items()}
-            if isinstance(obj, (list, tuple)):
-                return [_token_sanitize(i) for i in obj]
-            return str(obj)
-        
-        tool_output_str = json.dumps(_token_sanitize(raw_data_for_tokens))
+        if isinstance(raw_data_for_tokens, list):
+            # Usage should reflect the model context sample, not full UI table payload.
+            raw_data_for_tokens = raw_data_for_tokens[:100]
+        tool_output_str = json.dumps(sanitize_for_tokens(raw_data_for_tokens))
         base_in_tokens = budget["total_used"] + count_tokens(tool_output_str)
 
         padded_base_in = base_in_tokens * 1.05
         padded_base_out = base_out_tokens * 1.05
-        padded_v_in = verifier_token_in * 1.05
-        padded_v_out = verifier_token_out * 1.05
 
-        in_tokens = int(padded_base_in + padded_v_in)
-        out_tokens = int(padded_base_out + padded_v_out)
+        in_tokens = int(padded_base_in)
+        out_tokens = int(padded_base_out)
 
-        verifier_cfg = get_model_config(payload.verifier_model or payload.model)
         cost = (
             (padded_base_in / 1_000_000) * model_config.cost_per_1m_input
             + (padded_base_out / 1_000_000) * model_config.cost_per_1m_output
-            + (padded_v_in / 1_000_000) * verifier_cfg.cost_per_1m_input
-            + (padded_v_out / 1_000_000) * verifier_cfg.cost_per_1m_output
         )
 
         # ── 12. Final Save to History ──────────────────────────────────
@@ -608,5 +470,3 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             
         yield {"event": "error", "data": {"message": f"Error: {err_msg}"}}
 
-    finally:
-        pass
