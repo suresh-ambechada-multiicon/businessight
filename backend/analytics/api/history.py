@@ -104,30 +104,31 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
             report = "_Analysis was interrupted (server restart or process killed)._"
             exec_time = -1.0
 
-        res.append(
-            {
-                "id": h.id,
-                "session_id": h.session_id,
-                "query": h.query,
-                "created_at": h.created_at.isoformat(),
-                "task_id": h.task_id,
-                "result": {
-                    "report": report,
-                    "chart_config": h.chart_config,
-                    "raw_data": [],
-                    "sql_query": h.sql_query,
-                    "execution_time": exec_time,
-                    "has_data": bool(h.raw_data and len(h.raw_data) > 0),
-                },
-                "usage": {
-                    "input_tokens": h.input_tokens or 0,
-                    "output_tokens": h.output_tokens or 0,
-                    "estimated_cost": h.estimated_cost or 0,
-                }
-                if h.input_tokens
-                else None,
+        item = {
+            "id": h.id,
+            "session_id": h.session_id,
+            "query": h.query,
+            "created_at": h.created_at.isoformat(),
+            "task_id": h.task_id,
+            "result": {
+                "report": report,
+                "chart_config": h.chart_config,
+                "raw_data": [],
+                "sql_query": h.sql_query,
+                "execution_time": exec_time,
+                "has_data": bool(h.raw_data and len(h.raw_data) > 0),
+            },
+            "usage": {
+                "input_tokens": h.input_tokens or 0,
+                "output_tokens": h.output_tokens or 0,
+                "estimated_cost": h.estimated_cost or 0,
             }
-        )
+            if h.input_tokens
+            else None,
+        }
+        if getattr(h, "agent_trace", None):
+            item["agent_trace"] = h.agent_trace
+        res.append(item)
     return res[::-1]
 
 

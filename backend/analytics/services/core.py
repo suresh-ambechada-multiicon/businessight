@@ -37,6 +37,9 @@ from analytics.services.logger import RequestContext, get_logger
 from analytics.services.prompts import SYSTEM_PROMPT
 from analytics.services.tokens import count_tokens, estimate_query_budget
 from analytics.services.agent.tools import create_tools
+from analytics.services.agent.table_retrieval import rank_tables_for_query
+from analytics.services.agent.answer_verifier import verify_report_against_data
+from analytics.services.cache import get_cached_column_info
 
 logger = get_logger("pipeline")
 
@@ -138,11 +141,39 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         },
     )
 
-    model_config = get_model_config(payload.model)
+    exec_model = payload.executor_model or payload.model
+    model_config = get_model_config(exec_model)
+
+    def _column_hint_for_rank(table: str) -> str:
+        h = ctx.db_uri_hash
+        if h:
+            hit = get_cached_column_info(h, table)
+            if hit:
+                return hit
+        return table
+
+    ranked_tables = rank_tables_for_query(
+        usable_tables=usable_tables,
+        user_query=payload.query,
+        db=db,
+        db_uri_hash=ctx.db_uri_hash or "",
+        api_key=payload.api_key,
+        primary_model=payload.model,
+        semantic_table_rank=payload.semantic_table_rank,
+        column_hint_fn=_column_hint_for_rank,
+    )
+    skip_schema_cache = len(usable_tables) > 15
 
     # ── 4. Build Prompt & Messages ─────────────────────────────────────────────────
     send_status(ctx.task_id, "Building schema context...")
-    schema_context = build_schema_context(usable_tables, active_schema, db, ctx)
+    schema_context = build_schema_context(
+        usable_tables,
+        active_schema,
+        db,
+        ctx,
+        table_rank_order=ranked_tables,
+        skip_full_context_cache=skip_schema_cache,
+    )
     db_dialect = detect_dialect(db_uri)
     formatted_prompt = SYSTEM_PROMPT.format(
         db_schema=schema_context, db_dialect=db_dialect
@@ -156,7 +187,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
 
     # ── 5. Initialize LLM ──────────────────────────────────────────────
     send_status(ctx.task_id, "Initializing AI agent...")
-    llm = init_llm(payload.model, payload.api_key, payload.llm_config, ctx)
+    llm = init_llm(exec_model, payload.api_key, payload.llm_config, ctx)
 
     history_entry = None
     try:
@@ -210,6 +241,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                 history_entry.raw_data = simple_result["raw_data"]
                 history_entry.sql_query = simple_result.get("sql_query", "")
                 history_entry.has_data = bool(simple_result.get("raw_data"))
+                history_entry.agent_trace = [{"step": "simple_query_fast_path"}]
                 history_entry.save()
                 
                 yield {"event": "result", "data": {
@@ -217,6 +249,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                     "chart_config": None,
                     "raw_data": simple_result["raw_data"],
                     "sql_query": simple_result.get("sql_query", ""),
+                    "agent_trace": [{"step": "simple_query_fast_path"}],
                     "done": True,
                 }}
                 return
@@ -286,7 +319,8 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                 "last_non_empty_report": full_report,
                 "tool_calls": [],
                 "raw_data": raw_data,
-                "sql_query": payload.direct_sql
+                "sql_query": payload.direct_sql,
+                "trace": [],
             }
             # Also populate tool_state for proper extraction
             tool_state["last_sql_query"] = payload.direct_sql
@@ -357,10 +391,46 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         if data_validation["warnings"] and result["report"]:
             result["report"] += f"\n\n**Data Quality Note:** {data_validation['warnings'][0]}"
 
+        agent_trace = list(stream_data.get("trace") or [])
+        verifier_token_in = 0
+        verifier_token_out = 0
+        if payload.verify_answer:
+            send_status(ctx.task_id, "Verifying report against query results...")
+            yield {
+                "event": "status",
+                "data": {"message": "Verifying report against query results..."},
+            }
+            verdict = verify_report_against_data(
+                report=result.get("report") or "",
+                sql_query=result.get("sql_query") or "",
+                raw_data_sample=result.get("raw_data") or [],
+                verifier_model=payload.verifier_model or payload.model,
+                api_key=payload.api_key,
+                llm_config=payload.llm_config,
+                ctx=ctx,
+            )
+            verifier_token_in = int(verdict.get("verifier_input_tokens") or 0)
+            verifier_token_out = int(verdict.get("verifier_output_tokens") or 0)
+            agent_trace.append(
+                {
+                    "step": "verification",
+                    "consistent": verdict.get("ok"),
+                    "issues": verdict.get("issues") or [],
+                }
+            )
+            if not verdict.get("ok") and verdict.get("issues"):
+                result["report"] += (
+                    "\n\n**Verification note:** The following claims may not be fully "
+                    "supported by the retrieved data — please validate before acting:\n- "
+                    + "\n- ".join(verdict["issues"])
+                )
+
         # Token Usage Calculation
         # Output tokens: reasoning + tool calls + final report
-        out_tokens = count_tokens(stream_data.get("full_content", "")) + count_tokens(stream_data.get("full_tool_args_str", ""))
-        
+        base_out_tokens = count_tokens(stream_data.get("full_content", "")) + count_tokens(
+            stream_data.get("full_tool_args_str", "")
+        )
+
         # Input tokens: initial context + all tool outputs - serialize with proper handling
         raw_data_for_tokens = tool_state.get("best_raw_data") or []
         # Convert datetime objects to strings for JSON serialization
@@ -380,14 +450,22 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
             return str(obj)
         
         tool_output_str = json.dumps(_token_sanitize(raw_data_for_tokens))
-        in_tokens = budget["total_used"] + count_tokens(tool_output_str)
-        
-        # Add padding
-        in_tokens = int(in_tokens * 1.05) 
-        out_tokens = int(out_tokens * 1.05)
+        base_in_tokens = budget["total_used"] + count_tokens(tool_output_str)
 
-        cost = (in_tokens / 1_000_000 * model_config.cost_per_1m_input) + (
-            out_tokens / 1_000_000 * model_config.cost_per_1m_output
+        padded_base_in = base_in_tokens * 1.05
+        padded_base_out = base_out_tokens * 1.05
+        padded_v_in = verifier_token_in * 1.05
+        padded_v_out = verifier_token_out * 1.05
+
+        in_tokens = int(padded_base_in + padded_v_in)
+        out_tokens = int(padded_base_out + padded_v_out)
+
+        verifier_cfg = get_model_config(payload.verifier_model or payload.model)
+        cost = (
+            (padded_base_in / 1_000_000) * model_config.cost_per_1m_input
+            + (padded_base_out / 1_000_000) * model_config.cost_per_1m_output
+            + (padded_v_in / 1_000_000) * verifier_cfg.cost_per_1m_input
+            + (padded_v_out / 1_000_000) * verifier_cfg.cost_per_1m_output
         )
 
         # ── 12. Final Save to History ──────────────────────────────────
@@ -395,6 +473,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
         history_entry.chart_config = result["chart_config"]
         history_entry.raw_data = result["raw_data"]
         history_entry.sql_query = result["sql_query"]
+        history_entry.agent_trace = agent_trace
         history_entry.execution_time = exec_time
         history_entry.has_data = bool(result["raw_data"] and len(result["raw_data"]) > 0)
         history_entry.input_tokens = in_tokens
@@ -422,6 +501,7 @@ def process_analytics_query(payload: AnalyticsRequest, ctx: RequestContext):
                 "raw_data": result["raw_data"],
                 "sql_query": result["sql_query"],
                 "execution_time": exec_time,
+                "agent_trace": agent_trace,
                 "usage": {
                     "input_tokens": in_tokens,
                     "output_tokens": out_tokens,

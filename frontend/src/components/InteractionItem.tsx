@@ -18,6 +18,7 @@ import {
   Save,
   Command,
   Code,
+  ListTree,
 } from "lucide-react";
 import type { Interaction, SavedPrompt } from "../types";
 import { ReportDisplay } from "./ReportDisplay";
@@ -156,6 +157,20 @@ export const InteractionItem = memo(
                   </summary>
                   <div className="sql-content-wrapper">
                     <pre className="sql-code-block">{result.sql_query}</pre>
+                  </div>
+                </details>
+              )}
+
+              {interaction.agent_trace && interaction.agent_trace.length > 0 && (
+                <details className="sql-accordion agent-trace-accordion">
+                  <summary>
+                    <ListTree size={12} className="sql-icon" />
+                    Agent trace
+                  </summary>
+                  <div className="sql-content-wrapper">
+                    <pre className="agent-trace-json">
+                      {JSON.stringify(interaction.agent_trace, null, 2)}
+                    </pre>
                   </div>
                 </details>
               )}

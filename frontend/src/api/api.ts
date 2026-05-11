@@ -4,6 +4,20 @@ const HOST = window.location.hostname;
 const PROTOCOL = window.location.protocol; // http: or https:
 const BASE_URL = `${PROTOCOL}//${HOST}:8000/api/v1`;
 
+/** POST /query/ body — matches backend `AnalyticsRequest` (snake_case). */
+export interface AnalyticsQueryPayload {
+  query: string;
+  model: string;
+  api_key: string;
+  db_url: string;
+  session_id: string;
+  direct_sql?: string;
+  executor_model?: string | null;
+  verifier_model?: string | null;
+  semantic_table_rank?: boolean;
+  verify_answer?: boolean;
+}
+
 export const api = {
   fetchSessions: async () => {
     const response = await axios.get(`${BASE_URL}/sessions/`);
@@ -36,7 +50,7 @@ export const api = {
     return response.data;
   },
 
-  submitQuery: async (payload: any) => {
+  submitQuery: async (payload: AnalyticsQueryPayload) => {
     const response = await fetch(`${BASE_URL}/query/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

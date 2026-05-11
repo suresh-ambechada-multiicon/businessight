@@ -126,6 +126,11 @@ export async function drainAnalysisSseStream(params: {
                 ...eventData,
                 report: updatedReport,
               };
+              if (eventData.agent_trace != null) {
+                updatedInteraction.agent_trace = eventData.agent_trace;
+                delete (updatedInteraction.result as unknown as Record<string, unknown>)
+                  .agent_trace;
+              }
             } else if (eventType === "error") {
               const errorMsg =
                 eventData.error || eventData.message || "Unknown error";

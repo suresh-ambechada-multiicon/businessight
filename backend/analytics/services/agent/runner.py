@@ -33,12 +33,21 @@ class StreamResult:
     def __init__(self):
         self.data: dict = {}
         self.has_error: bool = False
+        self.trace: list[dict] = []
 
 
 # ── Schema Context Builder ──────────────────────────────────────────────
 
 
-def build_schema_context(usable_tables: list[str], active_schema, db, ctx=None) -> str:
+def build_schema_context(
+    usable_tables: list[str],
+    active_schema,
+    db,
+    ctx=None,
+    *,
+    table_rank_order: list[str] | None = None,
+    skip_full_context_cache: bool = False,
+) -> str:
     """
     Build the schema context string that gets injected into the system prompt.
     For small table counts, include full column details.
@@ -53,8 +62,8 @@ def build_schema_context(usable_tables: list[str], active_schema, db, ctx=None) 
 
     db_uri_hash = ctx.db_uri_hash if ctx else ""
 
-    # 1. Try full context cache first (fastest path)
-    if db_uri_hash:
+    # 1. Try full context cache first (fastest path) — skipped when ranking is query-specific
+    if db_uri_hash and not skip_full_context_cache:
         cached = get_cached_schema_context(db_uri_hash)
         if cached is not None:
             logger.info("Schema context from cache", extra={"data": {
@@ -113,37 +122,66 @@ def build_schema_context(usable_tables: list[str], active_schema, db, ctx=None) 
     if active_schema:
         schema_context += f"Active Schema: {active_schema} (Prefix tables with this schema if required by dialect)\n\n"
 
+    rank = table_rank_order or usable_tables
+    top_set: set[str] = set()
+    if len(usable_tables) > 10 and table_rank_order:
+        # Detailed columns for the top-ranked tables first (query-aware)
+        top_n = 12 if len(usable_tables) > 50 else 8
+        top = [t for t in rank if t in usable_tables][:top_n]
+        top_set = set(top)
+        if top:
+            lines = [_get_table_columns(t) for t in top]
+            schema_context += (
+                "Prioritized tables (retrieval-ranked for this question; inspect these first):\n"
+                + "\n".join(lines)
+                + "\n\n"
+            )
+
     if len(usable_tables) <= 10:
         lines = [_get_table_columns(t) for t in usable_tables]
         schema_context += "Detailed Schema:\n" + "\n".join(lines)
     elif len(usable_tables) <= 50:
-        schema_context += (
-            f"Tables: {', '.join(usable_tables)}\n"
-            f"Use `search_schema` or `get_table_info` to find specific columns."
-        )
+        rest = [t for t in usable_tables if t not in top_set]
+        if top_set:
+            schema_context += (
+                f"Other tables in this database ({len(rest)}): {', '.join(rest)}\n"
+                f"Use `search_schema` or `get_table_info` for columns on those tables."
+            )
+        else:
+            schema_context += (
+                f"Tables: {', '.join(usable_tables)}\n"
+                f"Use `search_schema` or `get_table_info` to find specific columns."
+            )
     else:
+        rest = [t for t in usable_tables if t not in top_set]
+        tail = ", ".join(rest[:80])
+        more = f" ... and {len(rest) - 80} more" if len(rest) > 80 else ""
         schema_context += (
-            f"Database contains {len(usable_tables)} tables.\n"
-            f"Use the `search_schema` tool with keywords like 'provider', 'booking', 'user' to find relevant tables.\n"
-            f"DO NOT guess table names."
+            f"Database contains {len(usable_tables)} business tables.\n"
+            f"Other table names (sample): {tail}{more}\n"
+            f"Use the `search_schema` tool with concrete keywords; DO NOT guess table names.\n"
         )
 
-    # 3. Cache the full context
-    if db_uri_hash:
+    # 3. Cache the full context (skip when query-specific ranking was applied)
+    if db_uri_hash and not skip_full_context_cache:
         set_cached_schema_context(db_uri_hash, schema_context)
 
     _ctx = ctx.to_dict() if ctx else {}
+    if table_rank_order and len(usable_tables) > 10:
+        mode = "ranked_large" if len(usable_tables) > 50 else "ranked_medium"
+    elif len(usable_tables) <= 10:
+        mode = "detailed"
+    elif len(usable_tables) > 50:
+        mode = "summary"
+    else:
+        mode = "names_only"
     logger.info(
         "Schema context built",
         extra={
             "data": {
                 **_ctx,
                 "table_count": len(usable_tables),
-                "mode": "detailed"
-                if len(usable_tables) <= 10
-                else "summary"
-                if len(usable_tables) > 50
-                else "names_only",
+                "mode": mode,
                 "context_length": len(schema_context),
             }
         },
@@ -377,14 +415,32 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
             # Signal specific tool calls to the frontend
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
+                    raw_args = tc.get("args") or {}
+                    if isinstance(raw_args, str):
+                        try:
+                            args = json.loads(raw_args) if raw_args.strip() else {}
+                        except Exception:
+                            args = {}
+                    else:
+                        args = raw_args if isinstance(raw_args, dict) else {}
                     if tc["name"] == "execute_read_only_sql":
-                        sql = tc["args"].get("query", "")
+                        sql = args.get("query", "")
+                        result_holder.trace.append(
+                            {
+                                "t": time.time(),
+                                "name": tc["name"],
+                                "sql_preview": (sql or "")[:500],
+                            }
+                        )
                         yield {
                             "event": "tool",
                             "data": {"name": tc["name"], "args": {"query": sql}},
                         }
                     elif tc["name"] not in ["AnalyticsResponse", "structured_response"]:
                         tool_name = tc["name"]
+                        result_holder.trace.append(
+                            {"t": time.time(), "name": tool_name}
+                        )
                         yield {"event": "tool", "data": {"name": tool_name}}
 
     except GeneratorExit:
@@ -448,6 +504,7 @@ def stream_agent(agent, messages, session_id, result_holder: StreamResult, ctx=N
         "full_tool_args_str": full_tool_args_str,
         "last_tool_args": last_tool_args,
         "last_non_empty_report": last_non_empty_report,
+        "trace": list(getattr(result_holder, "trace", []) or []),
     }
 
 

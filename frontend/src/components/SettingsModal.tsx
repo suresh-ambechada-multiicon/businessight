@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { api } from "../api/api";
+import type { AnalyticsAgentOptions } from "../types";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -11,6 +12,8 @@ interface SettingsModalProps {
   setApiKey: (k: string) => void;
   dbUrl: string;
   setDbUrl: (u: string) => void;
+  agentOptions: AnalyticsAgentOptions;
+  setAgentOptions: React.Dispatch<React.SetStateAction<AnalyticsAgentOptions>>;
 }
 
 export function SettingsModal({
@@ -22,12 +25,17 @@ export function SettingsModal({
   setApiKey,
   dbUrl,
   setDbUrl,
+  agentOptions,
+  setAgentOptions,
 }: SettingsModalProps) {
   const [tempModel, setTempModel] = useState(model);
   const [tempApiKey, setTempApiKey] = useState(apiKey);
   const [tempDbUrl, setTempDbUrl] = useState(dbUrl);
+  const [tempAgent, setTempAgent] = useState<AnalyticsAgentOptions>(agentOptions);
   const [isCustom, setIsCustom] = useState(false);
-  const [availableModels, setAvailableModels] = useState<{ id: string, name: string, provider: string }[]>([]);
+  const [availableModels, setAvailableModels] = useState<
+    { id: string; name: string; provider: string }[]
+  >([]);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
 
   // Sync temp state from props whenever modal opens
@@ -36,19 +44,23 @@ export function SettingsModal({
       setTempModel(model);
       setTempApiKey(apiKey);
       setTempDbUrl(dbUrl);
+      setTempAgent(agentOptions);
       setIsCustom(false);
     }
-  }, [isOpen, model, apiKey, dbUrl]);
+  }, [isOpen, model, apiKey, dbUrl, agentOptions]);
 
   useEffect(() => {
     if (isOpen) {
-      api.fetchModels().then(data => {
-        setAvailableModels(data);
-        setIsLoadingModels(false);
-      }).catch(err => {
-        console.error("Failed to load models:", err);
-        setIsLoadingModels(false);
-      });
+      api
+        .fetchModels()
+        .then((data) => {
+          setAvailableModels(data);
+          setIsLoadingModels(false);
+        })
+        .catch((err) => {
+          console.error("Failed to load models:", err);
+          setIsLoadingModels(false);
+        });
     }
   }, [isOpen]);
 
@@ -58,10 +70,15 @@ export function SettingsModal({
     setModel(tempModel);
     setApiKey(tempApiKey);
     setDbUrl(tempDbUrl);
+    setAgentOptions(tempAgent);
     onClose();
   };
 
-  const showCustomInput = isCustom || (!isLoadingModels && !availableModels.some(m => m.id === tempModel) && tempModel !== "");
+  const showCustomInput =
+    isCustom ||
+    (!isLoadingModels &&
+      !availableModels.some((m) => m.id === tempModel) &&
+      tempModel !== "");
   const selectValue = showCustomInput ? "custom" : tempModel;
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -80,25 +97,26 @@ export function SettingsModal({
       <div className="modal-content">
         <div className="modal-header">
           <h2 className="modal-title">Settings</h2>
-          <button className="icon-btn" onClick={onClose}>
+          <button type="button" className="icon-btn" onClick={onClose}>
             <X size={20} />
           </button>
         </div>
 
         <div className="form-group">
           <label className="form-label">LLM Provider & Model</label>
-          <select
-            className="form-input"
-            value={selectValue}
-            onChange={handleModelChange}
-          >
+          <select className="form-input" value={selectValue} onChange={handleModelChange}>
             {isLoadingModels ? (
               <option value="">Loading models...</option>
             ) : (
               <>
-                {availableModels.map(m => (
+                {availableModels.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.provider === 'openai' ? 'OpenAI' : m.provider === 'anthropic' ? 'Anthropic' : 'Google'} ({m.name})
+                    {m.provider === "openai"
+                      ? "OpenAI"
+                      : m.provider === "anthropic"
+                        ? "Anthropic"
+                        : "Google"}{" "}
+                    ({m.name})
                   </option>
                 ))}
                 <option value="custom">Custom (Enter manually)</option>
@@ -134,22 +152,73 @@ export function SettingsModal({
           />
         </div>
 
-<div className="form-group">
+        <div className="form-group">
           <label className="form-label">Analytics Database URL</label>
           <input
             type="text"
             className="form-input"
             placeholder="postgresql://user:pass@host/db"
             value={tempDbUrl}
-            onChange={(e) => setDbUrl(e.target.value)}
+            onChange={(e) => setTempDbUrl(e.target.value)}
           />
-          <span className="select-hint">
-            Leave blank to use the backend's default DB.
-          </span>
+          <span className="select-hint">Leave blank to use the backend&apos;s default DB.</span>
         </div>
 
-        <button className="btn-primary" onClick={handleSave}>
-          {" "}
+        <div className="settings-section-divider">
+          <h3 className="settings-subheading">Agent &amp; verification</h3>
+          <p className="settings-subtext">
+            Optional overrides for the analytics pipeline. Blank model fields use the primary model
+            above.
+          </p>
+        </div>
+
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={tempAgent.semanticTableRank}
+            onChange={(e) =>
+              setTempAgent((a) => ({ ...a, semanticTableRank: e.target.checked }))
+            }
+          />
+          <span>Semantic table ranking for large catalogs</span>
+        </label>
+
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={tempAgent.verifyAnswer}
+            onChange={(e) => setTempAgent((a) => ({ ...a, verifyAnswer: e.target.checked }))}
+          />
+          <span>Verify report against query results (extra LLM pass)</span>
+        </label>
+
+        <div className="form-group">
+          <label className="form-label">Executor model (optional)</label>
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Same as primary if empty — e.g. openai:gpt-4o"
+            value={tempAgent.executorModel}
+            onChange={(e) =>
+              setTempAgent((a) => ({ ...a, executorModel: e.target.value }))
+            }
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Verifier model (optional)</label>
+          <input
+            type="text"
+            className="form-input"
+            placeholder="Same as primary if empty — e.g. google_genai:gemini-2.0-flash"
+            value={tempAgent.verifierModel}
+            onChange={(e) =>
+              setTempAgent((a) => ({ ...a, verifierModel: e.target.value }))
+            }
+          />
+        </div>
+
+        <button type="button" className="btn-primary" onClick={handleSave}>
           Save Configuration
         </button>
       </div>

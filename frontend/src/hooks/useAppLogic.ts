@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { api } from "../api/api";
-import type { Interaction, Session } from "../types";
+import type { AnalyticsAgentOptions, Interaction, Session } from "../types";
+import type { AnalyticsQueryPayload } from "../api/api";
 import {
   clearInflightStorage,
   drainAnalysisSseStream,
@@ -304,8 +305,9 @@ export const useAppLogic = () => {
     model: string,
     apiKey: string,
     dbUrl: string,
-    directSql?: string,
-    promptName?: string
+    directSql: string | undefined,
+    promptName: string | undefined,
+    agentOptions: AnalyticsAgentOptions,
   ) => {
     const newInteractionId = Date.now();
     setInteractions((prev) => [
@@ -335,15 +337,25 @@ export const useAppLogic = () => {
     abortControllerRef.current = controller;
 
     try {
-      const payload: any = {
+      const payload: AnalyticsQueryPayload = {
         query,
         model,
         api_key: apiKey,
         db_url: dbUrl,
         session_id: currentSessionId,
+        semantic_table_rank: agentOptions.semanticTableRank,
+        verify_answer: agentOptions.verifyAnswer,
       };
       if (directSql) {
         payload.direct_sql = directSql;
+      }
+      const execM = agentOptions.executorModel.trim();
+      if (execM) {
+        payload.executor_model = execM;
+      }
+      const verM = agentOptions.verifierModel.trim();
+      if (verM) {
+        payload.verifier_model = verM;
       }
       
       const response = await api.submitQuery(payload);

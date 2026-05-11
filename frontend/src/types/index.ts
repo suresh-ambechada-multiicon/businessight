@@ -1,3 +1,6 @@
+/** Persisted tool / verification steps from the analytics agent (history API). */
+export type AgentTraceEntry = Record<string, unknown>;
+
 export interface Interaction {
   id?: number | string;
   session_id?: string;
@@ -12,6 +15,15 @@ export interface Interaction {
     output_tokens: number;
     estimated_cost: number;
   };
+  agent_trace?: AgentTraceEntry[] | null;
+}
+
+/** Options sent with each analytics query (Settings → Agent). */
+export interface AnalyticsAgentOptions {
+  executorModel: string;
+  verifierModel: string;
+  semanticTableRank: boolean;
+  verifyAnswer: boolean;
 }
 
 export interface InteractionResult {

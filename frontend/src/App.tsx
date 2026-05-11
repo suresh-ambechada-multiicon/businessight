@@ -5,7 +5,36 @@ import { RightSidebar } from "./components/RightSidebar";
 import { SettingsModal } from "./components/SettingsModal";
 import { ManagePromptsModal } from "./components/ManagePromptsModal";
 import { useAppLogic } from "./hooks/useAppLogic";
+import type { AnalyticsAgentOptions } from "./types";
 import "./App.css";
+
+function readStoredBool(key: string, defaultValue: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === null) return defaultValue;
+    return v === "true" || v === "1";
+  } catch {
+    return defaultValue;
+  }
+}
+
+function loadAgentOptions(): AnalyticsAgentOptions {
+  try {
+    return {
+      executorModel: localStorage.getItem("executorModel") || "",
+      verifierModel: localStorage.getItem("verifierModel") || "",
+      semanticTableRank: readStoredBool("semanticTableRank", true),
+      verifyAnswer: readStoredBool("verifyAnswer", true),
+    };
+  } catch {
+    return {
+      executorModel: "",
+      verifierModel: "",
+      semanticTableRank: true,
+      verifyAnswer: true,
+    };
+  }
+}
 
 function App() {
   const [theme, setTheme] = useState<"light" | "dark" | "system">(() => {
@@ -22,6 +51,7 @@ function App() {
   );
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("apiKey") || "");
   const [dbUrl, setDbUrl] = useState(() => localStorage.getItem("dbUrl") || "");
+  const [agentOptions, setAgentOptions] = useState<AnalyticsAgentOptions>(loadAgentOptions);
 
   const {
     currentSessionId,
@@ -62,6 +92,13 @@ function App() {
     localStorage.setItem("dbUrl", dbUrl);
   }, [model, apiKey, dbUrl]);
 
+  useEffect(() => {
+    localStorage.setItem("executorModel", agentOptions.executorModel);
+    localStorage.setItem("verifierModel", agentOptions.verifierModel);
+    localStorage.setItem("semanticTableRank", String(agentOptions.semanticTableRank));
+    localStorage.setItem("verifyAnswer", String(agentOptions.verifyAnswer));
+  }, [agentOptions]);
+
   const toggleTheme = useCallback(() => {
     setTheme((t) => {
       if (t === "light") return "dark";
@@ -89,8 +126,9 @@ function App() {
   );
 
   const handleQueryWrapper = useCallback(
-    (q: string, d?: string, pName?: string) => handleQuery(q, model, apiKey, dbUrl, d, pName),
-    [handleQuery, model, apiKey, dbUrl],
+    (q: string, d?: string, pName?: string) =>
+      handleQuery(q, model, apiKey, dbUrl, d, pName, agentOptions),
+    [handleQuery, model, apiKey, dbUrl, agentOptions],
   );
 
   return (
@@ -128,6 +166,8 @@ function App() {
         setApiKey={setApiKey}
         dbUrl={dbUrl}
         setDbUrl={setDbUrl}
+        agentOptions={agentOptions}
+        setAgentOptions={setAgentOptions}
       />
 
       <ManagePromptsModal

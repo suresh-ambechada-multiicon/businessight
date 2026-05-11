@@ -27,6 +27,11 @@ class QueryHistory(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     is_deleted = models.BooleanField(default=False)
     task_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    agent_trace = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Ordered tool / verification steps for audit and replay.",
+    )
 
     class Meta:
         ordering = ["created_at"]
