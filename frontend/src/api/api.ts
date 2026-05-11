@@ -24,8 +24,10 @@ export const api = {
     await axios.post(`${BASE_URL}/cancel/?session_id=${sessionId}`);
   },
 
-  fetchQueryData: async (queryId: string | number) => {
-    const response = await axios.get(`${BASE_URL}/history/${queryId}/data/`);
+  fetchQueryData: async (queryId: string | number, options?: { signal?: AbortSignal }) => {
+    const response = await axios.get(`${BASE_URL}/history/${queryId}/data/`, {
+      signal: options?.signal,
+    });
     return response.data;
   },
 

@@ -48,27 +48,12 @@ def create_table_stats_tool(db, ctx, _status, _ctx, _full_table, _quote_ident):
                 
                 columns_info = list(columns_result.fetchall())
 
+                # To avoid massive performance issues on large tables, we only do a basic row count
+                # and return the schema info, instead of doing COUNT(DISTINCT) on every column.
+                
                 for col_name, data_type, is_nullable in columns_info:
-                    quoted_col = _quote_ident(col_name)
-                    
-                    # Null count
-                    null_result = conn.execute(text(f"""
-                        SELECT COUNT(*) FROM {full_table} WHERE {quoted_col} IS NULL
-                    """))
-                    null_count = null_result.scalar()
-                    
-                    # Distinct count
-                    distinct_result = conn.execute(text(f"""
-                        SELECT COUNT(DISTINCT {quoted_col}) FROM {full_table}
-                    """))
-                    distinct_count = distinct_result.scalar()
-                    
-                    null_pct = (null_count / total_rows * 100) if total_rows > 0 else 0
-                    
-                    stats_lines.append(
-                        f"  {col_name}: {data_type} "
-                        f"(nulls: {null_count} ({null_pct:.1f}%), distinct: {distinct_count})"
-                    )
+                    nullable_str = "nullable" if is_nullable == 'YES' else "not null"
+                    stats_lines.append(f"  {col_name}: {data_type} ({nullable_str})")
 
             elapsed_ms = round((time.time() - start) * 1000, 2)
             logger.info("Tool: get_table_stats", extra={

@@ -38,7 +38,7 @@ def create_column_values_tool(db, ctx, _status, _ctx, _full_table, _quote_ident,
                     f"{quoted_col} as value, COUNT(*) as count",
                     full_table,
                     50,
-                    "GROUP BY {quoted_col} ORDER BY count DESC"
+                    f"GROUP BY {quoted_col} ORDER BY count DESC"
                 )
                 result = conn.execute(text(sql))
                 rows = result.fetchall()

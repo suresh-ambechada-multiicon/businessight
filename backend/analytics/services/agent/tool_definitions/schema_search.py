@@ -28,40 +28,49 @@ def create_schema_search_tool(db, usable_tables, ctx, _status, _ctx):
         keyword_lower = keyword.lower()
         
         try:
-            inspector = inspect(db._schema if db._schema else db._engine)
-            matching_tables = []
+            from sqlalchemy import text
             
-            for table_name in usable_tables:
-                if keyword_lower in table_name.lower():
-                    matching_tables.append(table_name)
-                    continue
-                    
-                # Check columns
-                try:
-                    columns = inspector.get_columns(table_name, schema=db._schema)
-                    for col in columns:
-                        if keyword_lower in col["name"].lower():
-                            matching_tables.append(table_name)
-                            break
-                except:
-                    pass
+            # Use direct SQL for efficiency - search both table and column names
+            query = text("""
+                SELECT table_name, column_name, data_type
+                FROM information_schema.columns 
+                WHERE (LOWER(table_name) LIKE :kw OR LOWER(column_name) LIKE :kw)
+                AND table_schema = :schema
+                ORDER BY table_name
+            """)
+            
+            with db._engine.connect() as conn:
+                res = conn.execute(query, {
+                    "kw": f"%{keyword_lower}%",
+                    "schema": db._schema or ("public" if db._engine.dialect.name == "postgresql" else "dbo")
+                })
+                rows = res.fetchall()
+
+            if not rows:
+                return f"No tables or columns found matching '{keyword}'"
+
+            # Group by table
+            tables_map = {}
+            for t_name, c_name, c_type in rows:
+                if t_name not in usable_tables: continue
+                if t_name not in tables_map: tables_map[t_name] = []
+                tables_map[t_name].append(f"{c_name} ({c_type})")
+
+            if not tables_map:
+                return f"No usable tables found matching '{keyword}'"
+
+            matching_tables = list(tables_map.keys())
+            result_lines = [f"Found {len(matching_tables)} matching tables:", ""]
+            
+            for t_name, cols in tables_map.items():
+                col_str = ", ".join(cols[:10])
+                if len(cols) > 10:
+                    col_str += f" ... and {len(cols)-10} more"
+                result_lines.append(f"  {t_name}:")
+                result_lines.append(f"    {col_str}")
             
             if not matching_tables:
                 return f"No tables or columns found matching '{keyword}'"
-            
-            # Get column info for matching tables
-            result_lines = [f"Found {len(matching_tables)} matching tables:", ""]
-            
-            for table_name in matching_tables:
-                try:
-                    columns = inspector.get_columns(table_name, schema=db._schema)
-                    col_names = [f"{c['name']}: {c['type']}" for c in columns[:10]]
-                    if len(columns) > 10:
-                        col_names.append(f"... and {len(columns) - 10} more columns")
-                    result_lines.append(f"  {table_name}:")
-                    result_lines.append(f"    {', '.join(col_names)}")
-                except Exception as e:
-                    result_lines.append(f"  {table_name}: Error - {str(e)}")
             
             result = "\n".join(result_lines)
             

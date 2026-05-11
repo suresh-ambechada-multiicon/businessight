@@ -71,10 +71,11 @@ def create_data_quality_tool(db, ctx, _status, _ctx, _full_table, _quote_ident):
                         empty_count = empty_result.scalar()
                     
                     # Distinct count
-                    distinct_result = conn.execute(text(f"""
-                        SELECT COUNT(DISTINCT {quoted_col}) FROM {full_table}
-                    """))
-                    distinct_count = distinct_result.scalar()
+                    if total_rows > 10000:
+                        distinct_count = -1 # Skip for large tables
+                    else:
+                        distinct_result = conn.execute(text(f"SELECT COUNT(DISTINCT {quoted_col}) FROM {full_table}"))
+                        distinct_count = distinct_result.scalar()
                     
                     # Build column stats
                     issues = []
@@ -88,7 +89,8 @@ def create_data_quality_tool(db, ctx, _status, _ctx, _full_table, _quote_ident):
                         issues.append("Constant value")
                     
                     status_icon = "[!]" if issues else "[OK]"
-                    col_info = f"  {status_icon} {col_name}: {data_type} | nulls: {null_count} ({null_pct:.1f}%) | distinct: {distinct_count}"
+                    distinct_display = "skipped (large table)" if distinct_count == -1 else distinct_count
+                    col_info = f"  {status_icon} {col_name}: {data_type} | nulls: {null_count} ({null_pct:.1f}%) | distinct: {distinct_display}"
                     if issues:
                         col_info += f" | {' '.join(issues)}"
                         quality_issues.append(f"    - {col_name}: {', '.join(issues)}")
@@ -96,15 +98,19 @@ def create_data_quality_tool(db, ctx, _status, _ctx, _full_table, _quote_ident):
                     column_stats.append(col_info)
                 
                 # Check for duplicate rows
-                dup_result = conn.execute(text(f"""
-                    SELECT COUNT(*) FROM (
-                        SELECT {', '.join([_quote_ident(c[0]) for c in columns])}
-                        FROM {full_table}
-                        GROUP BY {', '.join([_quote_ident(c[0]) for c in columns])}
-                        HAVING COUNT(*) > 1
-                    ) AS duplicates
-                """))
-                duplicate_rows = dup_result.scalar() or 0
+                if total_rows > 10000:
+                    duplicate_rows = 0
+                    quality_issues.append("    - Duplicate row check skipped due to large table size")
+                else:
+                    dup_result = conn.execute(text(f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT {', '.join([_quote_ident(c[0]) for c in columns])}
+                            FROM {full_table}
+                            GROUP BY {', '.join([_quote_ident(c[0]) for c in columns])}
+                            HAVING COUNT(*) > 1
+                        ) AS duplicates
+                    """))
+                    duplicate_rows = dup_result.scalar() or 0
                 
                 # Build report
                 lines = [

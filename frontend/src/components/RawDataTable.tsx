@@ -1,4 +1,13 @@
-import React, { useState, memo, useMemo, useEffect } from "react";
+import React, {
+  useState,
+  memo,
+  useMemo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useDeferredValue,
+  useCallback,
+} from "react";
 import {
   Database,
   Loader2,
@@ -9,6 +18,7 @@ import {
   X,
   Maximize2,
   Minimize2,
+  AlertCircle,
 } from "lucide-react";
 import { api } from "../api/api";
 
@@ -23,8 +33,9 @@ const BUFFER_ROWS = 10;
 
 export const RawDataTable = memo(
   ({ data: initialData, hasData, queryId }: RawDataTableProps) => {
-    const [rawDataTable, setRawDataTable] = useState<any[]>(initialData || []);
+    const [lazyData, setLazyData] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState<{
       key: string | null;
       direction: "asc" | "desc" | null;
@@ -35,10 +46,18 @@ export const RawDataTable = memo(
     }>({});
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [scrollTop, setScrollTop] = useState(0);
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    const abortRef = useRef<AbortController | null>(null);
+    const headerRef = useRef<HTMLDivElement>(null);
+    const bodyRef = useRef<HTMLDivElement>(null);
+
+    const dataToUse = lazyData.length > 0 ? lazyData : (initialData || []);
+    const deferredData = useDeferredValue(dataToUse);
 
     useEffect(() => {
-      if (initialData) setRawDataTable(initialData);
-    }, [initialData]);
+      if (!isFullscreen) setScrollTop(0);
+    }, [isFullscreen]);
 
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
@@ -52,25 +71,59 @@ export const RawDataTable = memo(
       return () => window.removeEventListener("keydown", handleKeyDown);
     }, [isFullscreen]);
 
-    const handleToggle = async (e: React.SyntheticEvent) => {
-      const details = e.target as HTMLDetailsElement;
-      if (details.open && rawDataTable.length === 0 && hasData && queryId) {
-        setLoading(true);
-        try {
-          const result = await api.fetchQueryData(queryId);
-          setRawDataTable(result.raw_data || []);
-        } catch (error) {
-          console.error("Failed to load historical data", error);
-        } finally {
-          setLoading(false);
-        }
+    useEffect(() => {
+      return () => abortRef.current?.abort();
+    }, []);
+
+    const hasLoadedData = dataToUse.length > 0;
+
+    const handleToggle = (e: React.SyntheticEvent) => {
+      const details = e.currentTarget as HTMLDetailsElement;
+      setIsExpanded(details.open);
+
+      if (loading) return;
+      if (!details.open) return;
+      if (!hasLoadedData && hasData && queryId) {
+        loadData();
       }
     };
 
-    const columns = useMemo(
-      () => (rawDataTable.length > 0 ? Object.keys(rawDataTable[0]) : []),
-      [rawDataTable],
-    );
+    const loadData = async () => {
+      if (loading) return;
+
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
+      abortRef.current = new AbortController();
+
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const result = await api.fetchQueryData(queryId!, {
+          signal: abortRef.current.signal,
+        });
+        setLazyData(result.raw_data || []);
+      } catch (error: any) {
+        if (error.name === "AbortError" || error.name === "CanceledError") {
+          return;
+        }
+        console.error("Failed to load historical data", error);
+        setLoadError("Failed to load data. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const columns = useMemo(() => {
+      if (deferredData.length === 0) return [];
+      const keys = new Set<string>();
+      deferredData.forEach((row) => {
+        Object.keys(row).forEach((key) => keys.add(key));
+      });
+      const firstRowKeys = Object.keys(deferredData[0]);
+      const additionalKeys = Array.from(keys).filter((k) => !firstRowKeys.includes(k));
+      return [...firstRowKeys, ...additionalKeys];
+    }, [deferredData]);
 
     const handleSort = (key: string) => {
       let direction: "asc" | "desc" | null = "asc";
@@ -91,16 +144,18 @@ export const RawDataTable = memo(
     };
 
     const filteredAndSortedData = useMemo(() => {
-      let result = [...rawDataTable];
+      const result = [...deferredData];
 
       Object.keys(filters).forEach((key) => {
         const val = filters[key].toLowerCase();
         if (val) {
-          result = result.filter((row) =>
+          const filtered = result.filter((row) =>
             String(row[key] ?? "")
               .toLowerCase()
               .includes(val),
           );
+          result.length = 0;
+          result.push(...filtered);
         }
       });
 
@@ -125,11 +180,39 @@ export const RawDataTable = memo(
       }
 
       return result;
-    }, [rawDataTable, filters, sortConfig]);
+    }, [deferredData, filters, sortConfig]);
+
+    /** Body has a vertical scrollbar; header does not — match widths so scrollLeft stays aligned. */
+    const syncHeaderScrollWithBody = useCallback((body: HTMLDivElement) => {
+      const header = headerRef.current;
+      if (!header) return;
+      header.scrollLeft = body.scrollLeft;
+      const vGutter = Math.max(0, body.offsetWidth - body.clientWidth);
+      header.style.paddingRight = vGutter > 0 ? `${vGutter}px` : "0px";
+    }, []);
 
     const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-      setScrollTop(e.currentTarget.scrollTop);
+      const body = e.currentTarget;
+      setScrollTop(body.scrollTop);
+      syncHeaderScrollWithBody(body);
     };
+
+    useLayoutEffect(() => {
+      if (dataToUse.length === 0 || loading) return;
+      const body = bodyRef.current;
+      if (!body) return;
+
+      const run = () => syncHeaderScrollWithBody(body);
+      run();
+
+      const ro = new ResizeObserver(run);
+      ro.observe(body);
+      window.addEventListener("resize", run);
+      return () => {
+        ro.disconnect();
+        window.removeEventListener("resize", run);
+      };
+    }, [dataToUse.length, filteredAndSortedData.length, isFullscreen, loading, columns.length, syncHeaderScrollWithBody]);
 
     const visibleHeight = isFullscreen ? 600 : 400;
     const totalHeight = filteredAndSortedData.length * ROW_HEIGHT;
@@ -149,10 +232,13 @@ export const RawDataTable = memo(
     const Container = isFullscreen ? "div" : "details";
     const Header = isFullscreen ? "div" : "summary";
 
-    // Dynamic vertical scrollbar calculation
-    const isScrollable = totalHeight > visibleHeight;
-    // Standard webkit scrollbar width is typically 15px.
-    // Overlay scrollbars (macOS) will still render fine.
+    const dataColTrackPx = isFullscreen ? 150 : 220;
+    /* flex-grow so few columns fill row width; minWidth keeps readable floor + horizontal scroll when tight */
+    const dataColStyle: React.CSSProperties = isFullscreen
+      ? { flex: "1 1 150px", minWidth: 150 }
+      : { flex: `1 1 ${dataColTrackPx}px`, minWidth: dataColTrackPx };
+    const tableTrackWidth =
+      columns.length === 0 ? 0 : 50 + columns.length * dataColTrackPx;
 
     return (
       <div
@@ -191,14 +277,14 @@ export const RawDataTable = memo(
                 style={{ marginRight: "8px", opacity: 0.7 }}
               />
               View Data{" "}
-              {rawDataTable.length > 0
-                ? `(${rawDataTable.length.toLocaleString()} rows)`
+              {dataToUse.length > 0
+                ? `(${dataToUse.length.toLocaleString()} rows)`
                 : hasData
                   ? "(Click to load)"
                   : ""}
             </div>
 
-            {(rawDataTable.length > 0 || isFullscreen) && (
+            {(dataToUse.length > 0 || isFullscreen) && (
               <button
                 className="fullscreen-toggle"
                 onClick={(e) => {
@@ -234,7 +320,22 @@ export const RawDataTable = memo(
                 <Loader2 className="spinner" size={20} />
                 Loading historical data...
               </div>
-            ) : rawDataTable.length > 0 ? (
+            ) : loadError ? (
+              <div className="error-state">
+                <AlertCircle size={16} />
+                {loadError}
+                <button
+                  onClick={() => {
+                    setLoadError(null);
+                    const mockEvent = { target: { open: true } } as unknown as React.SyntheticEvent;
+                    handleToggle(mockEvent);
+                  }}
+                  className="retry-btn"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : dataToUse.length > 0 ? (
               <div
                 className="virtual-table-container"
                 style={{
@@ -244,17 +345,14 @@ export const RawDataTable = memo(
                   flexDirection: "column",
                 }}
               >
-                <div
-                  className="virtual-header-scroll-wrapper"
-                  style={{ overflowY: isScrollable ? "scroll" : "hidden" }}
-                >
-                  <div className="virtual-table-header" style={{ flex: 1 }}>
+                <div ref={headerRef} className="virtual-header-scroll-wrapper">
+                  <div className="virtual-table-header">
                     <div className="virtual-header-cell row-num-header">#</div>
                     {columns.map((col) => (
                       <div
                         key={col}
                         className="virtual-header-cell sortable-header"
-                        style={{ flex: "1 1 150px", minWidth: 150 }}
+                        style={dataColStyle}
                         onClick={() => handleSort(col)}
                       >
                         <div className="header-content">
@@ -322,20 +420,30 @@ export const RawDataTable = memo(
                   </div>
                 </div>
                 <div
+                  ref={bodyRef}
                   className="virtual-list-container"
                   style={{
                     flex: isFullscreen ? 1 : "none",
                     height: isFullscreen ? "auto" : Math.min(400, totalHeight),
                     overflowY: "auto",
-                    overflowX: "hidden",
+                    overflowX: "auto",
                   }}
                   onScroll={handleScroll}
                 >
-                  <div style={{ height: totalHeight, position: "relative" }}>
+                  <div
+                    className="virtual-scroll-track"
+                    style={{
+                      height: totalHeight,
+                      position: "relative",
+                      minWidth: tableTrackWidth,
+                      width: "100%",
+                    }}
+                  >
                     <div
                       style={{
                         position: "absolute",
                         top: topPadding,
+                        left: 0,
                         width: "100%",
                       }}
                     >
@@ -356,7 +464,7 @@ export const RawDataTable = memo(
                             <div
                               key={col}
                               className="virtual-cell"
-                              style={{ flex: "1 1 150px", minWidth: 150 }}
+                              style={dataColStyle}
                               title={row[col] != null ? String(row[col]) : ""}
                             >
                               {row[col] != null ? String(row[col]) : "—"}
@@ -367,12 +475,6 @@ export const RawDataTable = memo(
                     </div>
                   </div>
                 </div>
-                {filteredAndSortedData.length > 0 && (
-                  <div className="virtual-footer">
-                    Showing {filteredAndSortedData.length.toLocaleString()} rows
-                    (virtualized) | Scroll to load more
-                  </div>
-                )}
               </div>
             ) : (
               <div className="no-data-message">No data available.</div>

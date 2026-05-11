@@ -5,6 +5,9 @@ SQL Executor Tool - Execute read-only SELECT queries against the database.
 import json
 import re
 import time
+import datetime
+from decimal import Decimal
+import uuid
 
 from langchain.tools import tool
 from sqlalchemy import text
@@ -50,10 +53,11 @@ def create_sql_executor(db, tool_state, ctx, _status, _ctx, _quote_ident, _full_
 
             with db._engine.connect() as conn:
                 result = conn.execute(text(query))
-                rows = result.fetchall()
+                # Use fetchmany instead of fetchall to avoid loading millions of rows into RAM
+                rows = result.fetchmany(max_rows + 1)
                 
-                # Limit rows
-                if len(rows) > max_rows:
+                has_more = len(rows) > max_rows
+                if has_more:
                     rows = rows[:max_rows]
                 
                 # Convert to dicts
@@ -87,18 +91,30 @@ def create_sql_executor(db, tool_state, ctx, _status, _ctx, _quote_ident, _full_
             # Track in state for later reference (full data for UI)
             tool_state["last_tool_call"] = "execute_read_only_sql"
             
+            def json_serializer(obj):
+                if isinstance(obj, (datetime.date, datetime.datetime, datetime.time)):
+                    return obj.isoformat()
+                if isinstance(obj, Decimal):
+                    return float(obj)
+                if isinstance(obj, uuid.UUID):
+                    return str(obj)
+                if isinstance(obj, (bytes, memoryview)):
+                    return "(binary data)"
+                return str(obj)
+
             # Truncate data returned to the LLM to save tokens
             # The UI will still get the full 'data' array from tool_state
             LLM_MAX_ROWS = 50
             if len(data) > LLM_MAX_ROWS:
+                total_msg = f"{len(data)}+" if has_more else str(len(data))
                 llm_response = {
-                    "_meta": f"Result truncated. Found {len(data)} rows total. Showing first {LLM_MAX_ROWS} rows to save tokens.",
+                    "_meta": f"Result truncated. Found {total_msg} rows total. Showing first {LLM_MAX_ROWS} rows to save tokens.",
                     "total_rows_found": len(data),
                     "data": data[:LLM_MAX_ROWS]
                 }
-                return json.dumps(llm_response)
+                return json.dumps(llm_response, default=json_serializer)
             
-            return json.dumps(data)
+            return json.dumps(data, default=json_serializer)
         except Exception as e:
             logger.error("SQL execution failed", extra={**_ctx, "query_preview": query[:500], "query": query, "error": str(e)})
             return json.dumps({"error": f"Error executing query: {str(e)}"})
