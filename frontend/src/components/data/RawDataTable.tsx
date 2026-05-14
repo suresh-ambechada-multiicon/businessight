@@ -85,7 +85,7 @@ export const RawDataTable = memo(
           return `(${dataToUse.length.toLocaleString()} of ${totalCount.toLocaleString()} rows)`;
         }
         if (truncated) {
-          return `(${dataToUse.length.toLocaleString()}+ rows loaded)`;
+          return `(Showing ${dataToUse.length.toLocaleString()} rows)`;
         }
         return `(${dataToUse.length.toLocaleString()} rows)`;
       }

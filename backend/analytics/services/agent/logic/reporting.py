@@ -1,8 +1,5 @@
-"""Final answer writing from backend-executed SQL evidence."""
+"""Evidence extraction and verified answer placement."""
 
-import json
-
-from analytics.schemas import VerifiedReportResponse
 from analytics.services.logger import get_logger
 
 logger = get_logger("agent")
@@ -122,116 +119,53 @@ def _evidence_from_result(result: dict, *, max_rows_per_block: int = 80) -> dict
     return {"blocks": evidence_blocks}
 
 
-def has_executed_evidence(result: dict) -> bool:
-    evidence = _evidence_from_result(result)
-    return bool(evidence.get("blocks"))
-
-
-def write_verified_report(llm, user_query: str, result: dict, ctx=None) -> str:
-    """
-    Final answer writer. It receives only backend-executed SQL evidence and
-    returns Markdown. It must not rely on draft agent prose.
-    """
-    evidence = _evidence_from_result(result)
-    if not evidence.get("blocks"):
-        return str(result.get("report") or "").strip()
-
-    _ctx = ctx.to_dict() if ctx else {}
-    system_prompt = (
-        "You are a senior data analyst writing the final user-facing answer.\n"
-        "Your goal is to provide a professional, insightful summary of the data.\n"
-        "Use only the provided executed SQL evidence. Do not invent counts, fields, "
-        "trends, labels, or explanations not supported by evidence.\n"
-        "Write natural Markdown that fits the user's question. Do not use a fixed template, "
-        "do not add generic headings, and do not call the output a report.\n"
-        "When multiple evidence blocks are present, write deeper analysis: compare peaks "
-        "and lows, totals, averages, period-over-period movement, concentration, and "
-        "notable gaps when those facts are visible in the evidence.\n"
-        "Keep the answer brief and explanatory. It will be shown with chart/table blocks, "
-        "so describe what the displayed data says without introducing the answer.\n"
-        "If the evidence is a single COUNT row, provide a clear, professional statement of the total and its significance.\n"
-        "If the user asks for a longer window but the evidence contains fewer populated periods, "
-        "state both the requested window and the observed populated period count clearly.\n"
-        "If `truncated` is true and `total_count` is null, the total matching record count is unknown. "
-        "Never present `loaded_sample_rows` as the total dataset size; say only that the UI shows a capped sample.\n"
-        "When some candidate SQL blocks are empty but others return rows, ignore the empty candidates in the findings. "
-        "Do not conclude that data is unavailable if any executed evidence block has rows.\n"
-        "Maintain a professional and helpful tone. Do not include raw SQL in the text."
-    )
-    user_payload = {
-        "question": user_query,
-        "executed_evidence": evidence,
-    }
-    try:
-        structured_llm = llm.with_structured_output(VerifiedReportResponse)
-        response = structured_llm.invoke(
-            [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(user_payload, default=str),
-                },
-            ]
-        )
-        if hasattr(response, "report"):
-            report = str(response.report or "").strip()
-        elif isinstance(response, dict):
-            report = str(response.get("report") or "").strip()
-        else:
-            report = ""
-        logger.info(
-            "Verified report written",
-            extra={
-                "data": {
-                    **_ctx,
-                    "evidence_blocks": len(evidence.get("blocks") or []),
-                    "report_length": len(report),
-                }
-            },
-        )
-        return report or str(result.get("report") or "").strip()
-    except Exception as exc:
-        logger.warning(
-            "Verified report generation failed",
-            exc_info=True,
-            extra={"data": {**_ctx, "error": str(exc)[:300]}},
-        )
-        return str(result.get("report") or "").strip()
-
-
-def apply_verified_report(result: dict, report: str) -> dict:
-    """Keep model-requested evidence blocks and place verified narrative around them."""
-    clean_report = (report or "").strip()
-    if not clean_report:
+def apply_verified_answer(result: dict, answer: dict) -> dict:
+    """Place overview first, then each table/chart followed by its own insight."""
+    overview = str(answer.get("overview") or "").strip()
+    if not overview and not answer.get("block_insights"):
         return result
 
     existing_blocks = [
-        block
-        for block in result.get("result_blocks") or []
-        if isinstance(block, dict)
+        block for block in result.get("result_blocks") or [] if isinstance(block, dict)
     ]
-    table_blocks = [block for block in existing_blocks if block.get("kind") == "table"]
-    chart_blocks = [block for block in existing_blocks if block.get("kind") == "chart"]
-    data_blocks = [*table_blocks, *chart_blocks]
-    text_blocks = [
-        block
-        for block in existing_blocks
-        if block.get("kind") in {"text", "summary"} and str(block.get("text") or "").strip()
-    ]
+    insights = {
+        int(item.get("index")): item
+        for item in answer.get("block_insights") or []
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    }
 
-    result["report"] = clean_report
-    if data_blocks:
-        overview = text_blocks[:1] or [{"kind": "summary", "title": "Summary", "text": clean_report}]
-        extra_text = text_blocks[1:]
-        result["result_blocks"] = [
-            *overview,
-            *table_blocks,
-            *extra_text,
-            *chart_blocks,
-            {"kind": "summary", "title": "Interpretation", "text": clean_report},
-        ]
-    else:
-        result["result_blocks"] = [{"kind": "summary", "text": clean_report}]
+    out_blocks: list[dict] = []
+    if overview:
+        out_blocks.append({"kind": "summary", "title": "Analysis", "text": overview})
+
+    idx = 0
+    while idx < len(existing_blocks):
+        block = existing_blocks[idx]
+        kind = block.get("kind")
+
+        if kind in {"table", "chart"}:
+            out_blocks.append(block)
+            insight = insights.get(idx)
+            if insight:
+                out_blocks.append(
+                    {
+                        "kind": "summary",
+                        "title": insight.get("title") or "Insight",
+                        "text": str(insight.get("text") or "").strip(),
+                    }
+                )
+            elif idx + 1 < len(existing_blocks) and existing_blocks[idx + 1].get("kind") in {"text", "summary"}:
+                out_blocks.append(existing_blocks[idx + 1])
+                idx += 1
+        elif not overview and kind in {"text", "summary"}:
+            out_blocks.append(block)
+        idx += 1
+
+    if not out_blocks and overview:
+        out_blocks = [{"kind": "summary", "title": "Analysis", "text": overview}]
+
+    result["report"] = overview or str(result.get("report") or "")
+    result["result_blocks"] = out_blocks or existing_blocks
     return result
 
 

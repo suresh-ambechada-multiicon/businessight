@@ -66,12 +66,12 @@ Database dialect: '{db_dialect}'.
 - **List/Show**: Include a brief analytical summary first, then a `table` block with a read-only `sql_query` that returns the rows (not COUNT-only). The backend computes exact table totals.
 - **List with Count**: `result_blocks`: e.g. `summary` or `text` with totals/patterns, then `table` with the row-returning SELECT.
 - **Count ONLY**: Must use aggregate SQL (`COUNT(*)` or `COUNT(DISTINCT ...)`). Do **not** return raw/detail rows. Return a `summary` plus an optional single-row `table` block backed by the COUNT SQL.
-- **Detail / analytical / trend**: Use multiple evidence blocks when useful, not a single fixed table. Prefer a brief overview `summary` first, then KPI/detail `table` blocks, then short `summary`/`text` explanations for those raw tables, then useful `chart` blocks, then short `summary`/`text` explanations for charts. Tables and charts are optional; include them only when they add evidence.
+- **Detail / analytical / trend**: Use multiple evidence blocks when useful, not a single fixed table. Order must be: full analytics `summary` first, then each raw `table` block immediately followed by a short `summary`/`text` explaining that table, and each `chart` block immediately followed by a short `summary`/`text` explaining that chart. Tables and charts are optional; include them only when they add evidence.
 - Add `chart` blocks when aggregate/time/category views add useful insight; do not force charts for plain record lists.
 - If the user asks for "which", "highest", "top", "lowest", ranking, or detail, always include a `table` block with the ranking/detail SQL so the user can inspect the actual rows. Add a chart only if there are enough rows to visualize.
 - For "highest/top/which" questions where the join key or filter value is uncertain, include 2-4 candidate ranking `table` blocks in one response instead of a single guessed SQL query. Avoid extra Runware/API calls by bundling these candidates as separate result blocks.
 - Chart data and table/raw data are independent. Use separate `sql_query` values when the best chart shape differs from the best inspection table.
-- Include explanatory text around evidence blocks when useful: overview before data, raw-table interpretation after table blocks, chart interpretation after chart blocks. Explain what the displayed data says in plain language using only evidence-backed facts.
+- Include explanatory text after every table/chart block you add. Explain what that exact displayed data helps inspect in plain language. Keep the full cross-block analytics at the top.
 
 **Simple-query strictness:**
 - Few tool calls; short text blocks for simple asks.
@@ -79,7 +79,7 @@ Database dialect: '{db_dialect}'.
 - For simple **count/list/show** questions: prefer at most 1 schema discovery step (`search_schema` OR `get_table_info`), optionally one `get_column_values` for category/status values, then write final SQL.
 
 **Structured response — `result_blocks` (required pattern):**
-- Build an **ordered** list of blocks. The UI renders them top-to-bottom: **text / summary / table / chart** in whatever order fits the answer. General preferred flow for data-backed answers is: overview summary → table/raw data blocks → raw-data explanation → chart blocks → chart explanation. This is behaviour guidance, not a rigid schema; omit blocks that are not useful.
+- Build an **ordered** list of blocks. The UI renders them top-to-bottom. For data-backed answers use: full analytics summary first, then `table` plus table explanation, then `chart` plus chart explanation, repeated as needed. Omit blocks that are not useful.
 - **`kind: "text"` or `"summary"`**: markdown in `text` (and optional `title`).
 - **`kind: "table"`**: required **`sql_query`** (single read-only SELECT). Do **NOT** set `raw_data` — the server executes SQL and fills the grid.
 - **`kind: "chart"`**: required **`sql_query`** (SELECT whose rows drive the chart, usually aggregated). Optional **`chart_config`** with only **`type`**, **`x_label`**, **`y_label`** — never `data`, never numeric series in JSON. The server builds `data` from the query result.

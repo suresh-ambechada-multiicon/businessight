@@ -144,8 +144,6 @@ function App() {
         setSavedPrompts={setSavedPrompts}
       />
 
-      {/*<RightSidebar interactions={currentInteractions} />*/}
-
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={closeSettings}

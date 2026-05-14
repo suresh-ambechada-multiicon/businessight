@@ -145,14 +145,35 @@ class AnalyticsResponse(BaseModel):
     )
 
 
-class VerifiedReportResponse(BaseModel):
-    report: str = Field(
+class VerifiedBlockInsight(BaseModel):
+    index: int = Field(description="Original evidence block index supplied by the backend.")
+    title: str | None = Field(
+        default=None,
+        description="Short optional heading for this block-specific explanation.",
+    )
+    text: str = Field(
         description=(
-            "Final Markdown report written only from the executed SQL evidence supplied by the backend. "
-            "Do not mention numbers, totals, rows, charts, or trends that are not present in the evidence."
+            "Markdown explanation and analytics for this specific table/chart evidence block. "
+            "Use bullets or numbered lists when there are multiple observations."
         )
     )
-    overview: str | None = Field(
-        default=None,
-        description="Optional short executive overview to show before data blocks.",
+
+
+class VerifiedAnswerResponse(BaseModel):
+    overview: str = Field(
+        description=(
+            "Detailed top-level Markdown analytics across all executed SQL evidence. "
+            "This should be the main answer before raw tables/charts: include key facts, "
+            "important counts, relationships between evidence blocks, rankings/trends, "
+            "and useful implications supported by data. Use headings, bullet lists, or numbered lists "
+            "when presenting multiple points. Use only facts present in evidence. "
+            "Do not call this a report."
+        )
+    )
+    block_insights: list[VerifiedBlockInsight] = Field(
+        default_factory=list,
+        description=(
+            "One explanation per non-empty table/chart block. Each item must reference "
+            "the original evidence block index."
+        ),
     )

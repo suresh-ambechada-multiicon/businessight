@@ -1,73 +1,26 @@
-# React + TypeScript + Vite
+# BusinessDataSight Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + TypeScript chat UI for database analytics.
 
-Currently, two official plugins are available:
+## Runtime Flow
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. `App.tsx` owns persisted settings: theme, model, API key, DB URL, optional executor model.
+2. `useAppLogic.ts` owns sessions, interactions, saved prompts, query submit/cancel, history polling, SSE resume.
+3. `api/api.ts` targets `/api/v1` by default, or `VITE_API_BASE_URL` when set.
+4. `ChatInputArea.tsx` submits natural-language query or saved prompt direct SQL.
+5. `analysisStream.ts` drains backend SSE, maps `query_id`, `status`, `thinking`, `report`, `usage`, `result` events into interaction state.
+6. `InteractionItem.tsx` renders user message, live status/thinking, Markdown text, SQL modal, tables, charts, usage.
+7. `RawDataTable.tsx` renders virtualized data grid, starts open, supports filter/sort/fullscreen.
+8. `ChartDisplay.tsx` renders Recharts visualizations from hydrated chart config.
 
-## React Compiler
+## Commands
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `bun run dev`: Vite dev server on port `5173`.
+- `bun run build`: TypeScript build + Vite production build.
+- `bun run lint`: ESLint.
+- `bun run preview`: preview production build.
 
-## Expanding the ESLint configuration
+## Environment
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- `VITE_API_BASE_URL`: optional API base URL. If missing, dev ports infer `http://<host>:8000/api/v1`; production uses `/api/v1`.
+- `VITE_USD_TO_INR`: optional cost conversion rate.
