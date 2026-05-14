@@ -29,6 +29,7 @@ function mapHistoryItem(item: any, idx: number): Interaction {
     id: item.id ?? `hist-${idx}-${Date.now()}`,
     session_id: String(item.session_id || "default"),
     task_id: item.task_id ?? null,
+    thinking: item.thinking_steps,
   };
 }
 
@@ -101,10 +102,13 @@ export async function drainAnalysisSseStream(params: {
             if (eventType === "query_id") {
               updatedInteraction.id = eventData.id;
               updatedInteraction.task_id = taskId;
-            } else if (eventType === "status") {
+            } else if (eventType === "status" || eventType === "retry") {
               updatedInteraction.status = eventData.message;
             } else if (eventType === "tool") {
-              if (eventData.name === "execute_read_only_sql") {
+              if (
+                eventData.name === "execute_read_only_sql" ||
+                eventData.name === "execute_final_sql"
+              ) {
                 updatedInteraction.status = "Executing database query...";
               } else {
                 updatedInteraction.status = `Tool: ${eventData.name}`;
@@ -143,6 +147,8 @@ export async function drainAnalysisSseStream(params: {
               }
             } else if (eventType === "usage") {
               updatedInteraction.usage = eventData;
+            } else if (eventType === "thinking") {
+              updatedInteraction.thinking = (updatedInteraction.thinking || "") + (eventData.content || "");
             }
 
             return updatedInteraction;

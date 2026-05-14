@@ -3,7 +3,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -14,13 +14,13 @@ services:
     image: postgres:15-alpine
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=businessdatasight
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=${DB_NAME:-businessdatasight}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d businessdatasight"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-businessdatasight}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -30,15 +30,17 @@ services:
       context: ./backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/businessdatasight
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-businessdatasight}
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DEBUG=False
-      - CORS_ALLOWED_ORIGINS=http://localhost,http://127.0.0.1,http://localhost:8080,http://localhost:5173
-      - CSRF_TRUSTED_ORIGINS=http://localhost,http://127.0.0.1,http://localhost:8080,http://localhost:5173
+      - DEBUG=${DEBUG:-False}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://localhost:5173}
+      - CSRF_TRUSTED_ORIGINS=${CSRF_TRUSTED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://localhost:5173}
     depends_on:
       db:
         condition: service_healthy
@@ -49,10 +51,9 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
-    # Concurrency flag limits processes to save resources, scale up if needed
-    command: ["uv", "run", "celery", "-A", "BusinessSight", "worker", "-l", "info", "--concurrency=4"]
+    command: ["uv", "run", "celery", "-A", "BusinessSight", "worker", "-l", "info", "--concurrency=${CELERY_CONCURRENCY:-4}"]
     environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/businessdatasight
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-businessdatasight}
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
@@ -69,7 +70,9 @@ services:
       context: ./frontend
     restart: unless-stopped
     ports:
-      - "80:8080" # Map host 80 to container 8080
+      - "${FRONTEND_PORT:-80}:8080"
+    environment:
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL}
     depends_on:
       - backend
 

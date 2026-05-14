@@ -25,7 +25,7 @@ export const useAppLogic = () => {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [savedPrompts, setSavedPrompts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  
+
   const abortControllerRef = useRef<AbortController | null>(null);
   const loadedSessionsRef = useRef<Set<string>>(new Set());
   const resumeStreamControllersRef = useRef(new Map<string, AbortController>());
@@ -112,7 +112,7 @@ export const useAppLogic = () => {
         ]);
         const sessionsList = Array.isArray(sessionsData) ? sessionsData : [];
         const promptsList = Array.isArray(promptsData) ? promptsData : [];
-        
+
         const mapped: Session[] = sessionsList.map((s: any) => ({
           id: String(s.id),
           title: s.title || "New Chat",
@@ -179,7 +179,7 @@ export const useAppLogic = () => {
   }, [currentSessionId, loadSessionHistory]);
 
   // Poll history only when there are incomplete interactions.
-  // Use refs to avoid restarting polling on every interactions update.
+  // Prefer SSE resume streams; fall back to polling only when no resume stream exists.
   useEffect(() => {
     if (!currentSessionId) return;
 
@@ -189,7 +189,21 @@ export const useAppLogic = () => {
         isAnalysisIncomplete(i)
     );
 
+    // If nothing is incomplete, stop any polling
     if (!hasIncomplete) {
+      if (pollingIntervalRef.current !== null) {
+        window.clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      return;
+    }
+
+    // If any SSE stream is active, prefer Redis streaming and do not poll history.
+    // This covers both resumed streams and the stream opened immediately after submit.
+    if (
+      activeSubmitTaskIdRef.current ||
+      (resumeStreamControllersRef.current && resumeStreamControllersRef.current.size > 0)
+    ) {
       if (pollingIntervalRef.current !== null) {
         window.clearInterval(pollingIntervalRef.current);
         pollingIntervalRef.current = null;
@@ -199,14 +213,27 @@ export const useAppLogic = () => {
 
     if (pollingIntervalRef.current !== null) return;
 
+    // Poll less aggressively; use 10s when falling back to polling.
     pollingIntervalRef.current = window.setInterval(async () => {
+      // If a Redis stream started since interval creation, stop polling.
+      if (
+        activeSubmitTaskIdRef.current ||
+        (resumeStreamControllersRef.current && resumeStreamControllersRef.current.size > 0)
+      ) {
+        if (pollingIntervalRef.current !== null) {
+          window.clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        return;
+      }
+
       // Check again before making request
       const stillHasIncomplete = interactionsRef.current.some(
         (i) =>
           String((i as any).session_id) === String(currentSessionId) &&
           isAnalysisIncomplete(i)
       );
-      
+
       if (!stillHasIncomplete) {
         if (pollingIntervalRef.current !== null) {
           window.clearInterval(pollingIntervalRef.current);
@@ -261,7 +288,7 @@ export const useAppLogic = () => {
       } catch (error) {
         console.error("Polling history failed", error);
       }
-    }, 3000);
+    }, 10000);
 
     return () => {
       if (pollingIntervalRef.current !== null) {
@@ -319,12 +346,19 @@ export const useAppLogic = () => {
       const lastIdx = prev.findLastIndex(
         (i) =>
           ((i as any).session_id || "default") === currentSessionId &&
-          !i.result
+          isAnalysisIncomplete(i)
       );
       if (lastIdx === -1) return prev;
       return prev.map((i, idx) =>
         idx === lastIdx
-          ? { ...i, status: "Analysis stopped.", result: { report: "_Analysis cancelled by user._" } }
+          ? {
+            ...i,
+            status: "Analysis stopped.",
+            result: {
+              report: "_Analysis cancelled by user._",
+              execution_time: -1,
+            },
+          }
           : i,
       );
     });
@@ -373,7 +407,6 @@ export const useAppLogic = () => {
         api_key: apiKey,
         db_url: dbUrl,
         session_id: currentSessionId,
-        verify_answer: agentOptions.verifyAnswer,
       };
       if (directSql) {
         payload.direct_sql = directSql;
@@ -382,11 +415,7 @@ export const useAppLogic = () => {
       if (execM) {
         payload.executor_model = execM;
       }
-      const verM = agentOptions.verifierModel.trim();
-      if (verM) {
-        payload.verifier_model = verM;
-      }
-      
+
       const response = await api.submitQuery(payload);
       const taskId = response.task_id;
       activeSubmitTaskIdRef.current = taskId;
@@ -422,12 +451,12 @@ export const useAppLogic = () => {
         prev.map((i) =>
           i.id === newInteractionId
             ? {
-                ...i,
-                result: { 
-                  report: `An error occurred: ${error.message}`,
-                  execution_time: 0.1 // Signal completion to UI
-                },
-              }
+              ...i,
+              result: {
+                report: `An error occurred: ${error.message}`,
+                execution_time: 0.1 // Signal completion to UI
+              },
+            }
             : i,
         ),
       );

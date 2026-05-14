@@ -14,6 +14,7 @@ from django.conf import settings
 from langchain_community.utilities import SQLDatabase
 from sqlalchemy import inspect
 
+from analytics.constants import INTERNAL_TABLE_PREFIXES
 from analytics.services.cache import (
     get_cached_tables,
     get_db_uri_hash,
@@ -23,10 +24,6 @@ from analytics.services.cache import (
 from analytics.services.logger import get_logger
 
 logger = get_logger("db")
-
-
-# Prefixes to exclude from "business tables" list
-INTERNAL_TABLE_PREFIXES = ("django_", "auth_", "analytics_")
 
 
 def normalize_db_uri(db_uri: str) -> str:
@@ -132,13 +129,20 @@ def detect_active_schema(db_uri: str, engine_args: dict, ctx=None):
     # 1. Try cache first
     cached_schema = get_cached_schema(db_uri_hash)
     if cached_schema is not None:
+        # SQL Server installs commonly use dbo. Do not let an old cached
+        # empty schema force fallback/default behavior.
+        if "mssql" in db_uri and not cached_schema:
+            cached_schema = None
+        elif "mssql" in db_uri:
+            return db_uri, cached_schema
         if cached_schema and "postgresql" in db_uri:
             parsed = urlparse(db_uri)
             qs = parse_qs(parsed.query)
             qs["options"] = [f"-c search_path={cached_schema},public"]
             db_uri = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
-            return db_uri, None
-        return db_uri, cached_schema if cached_schema else None
+            return db_uri, cached_schema
+        if cached_schema is not None:
+            return db_uri, cached_schema if cached_schema else None
 
     # 2. Cache miss — inspect
     start_detect = time.time()
@@ -199,13 +203,13 @@ def detect_active_schema(db_uri: str, engine_args: dict, ctx=None):
         },
     )
 
-    # For PostgreSQL, set search_path so queries don't need schema prefix
+    # For PostgreSQL, set search_path so generated SQL can omit schema prefixes,
+    # but keep active_schema for discovery/context so tools don't fall back to public.
     if active_schema and "postgresql" in db_uri:
         parsed = urlparse(db_uri)
         qs = parse_qs(parsed.query)
         qs["options"] = [f"-c search_path={active_schema},public"]
         db_uri = urlunparse(parsed._replace(query=urlencode(qs, doseq=True)))
-        active_schema = None  # search_path handles it now
 
     return db_uri, active_schema
 
@@ -236,10 +240,11 @@ def discover_tables(db, active_schema, ctx=None) -> list[str]:
     re-inspecting on every request.
     """
     db_uri_hash = ctx.db_uri_hash if ctx else ""
+    schema_cache_key = f"{db_uri_hash}:{active_schema or '__default__'}"
 
     # Try cache first
     if db_uri_hash:
-        cached = get_cached_tables(db_uri_hash)
+        cached = get_cached_tables(schema_cache_key)
         if cached is not None:
             logger.info(
                 "Tables loaded from cache",
@@ -295,7 +300,7 @@ def discover_tables(db, active_schema, ctx=None) -> list[str]:
 
     # Cache the result
     if db_uri_hash:
-        set_cached_tables(db_uri_hash, usable)
+        set_cached_tables(schema_cache_key, usable)
 
     return usable
 

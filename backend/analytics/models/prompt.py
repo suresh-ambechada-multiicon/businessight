@@ -2,6 +2,7 @@ from django.db import models
 
 
 class SavedPrompt(models.Model):
+    objects = models.Manager()
     name = models.CharField(max_length=255, unique=True)
     query = models.TextField()
     sql_command = models.TextField(unique=True)

@@ -11,6 +11,8 @@ from analytics.services.cache.redis import (
     invalidate_schema_cache,
     get_or_create_engine,
     dispose_engine,
+    get_cached_sql_result,
+    set_cached_sql_result,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
     "invalidate_schema_cache",
     "get_or_create_engine",
     "dispose_engine",
+    "get_cached_sql_result",
+    "set_cached_sql_result",
 ]

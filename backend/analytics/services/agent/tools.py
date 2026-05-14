@@ -12,17 +12,24 @@ from analytics.services.agent.tool_definitions import (
     create_sql_executor,
     create_table_info_tool,
     create_schema_search_tool,
-    create_table_stats_tool,
     create_column_values_tool,
     create_table_relationships_tool,
-    # Analytics tools
-    create_data_quality_tool,
-    create_trend_analysis_tool,
     create_aggregation_tool,
-    create_correlation_tool,
-    create_outlier_detection_tool,
 )
 from analytics.services.status import send_status
+
+
+def sql_max_rows_from_budget(token_budget: dict | None) -> int:
+    """Same row cap as SQL executor tools — reuse for post-process hydration."""
+    max_rows = 2000
+    if token_budget:
+        available = token_budget.get("available_for_tools", 100000)
+        tokens_per_row = 150
+        usable_budget = int(available * 0.7)
+        max_rows = max(20, min(2000, usable_budget // tokens_per_row))
+    return max_rows
+
+
 def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     """
     Factory that creates the analytics tools bound to a specific
@@ -37,7 +44,7 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         return "mssql" in db._engine.url.drivername
 
     def _quote_ident(name: str) -> str:
-        name = name.strip('"').strip('[]').strip('`')
+        name = name.strip('"').strip("[]").strip("`")
         if _is_mssql():
             return f"[{name}]"
         return f'"{name}"'
@@ -74,15 +81,20 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
         "final_sql_query": "",
         "final_raw_data": None,
         "final_query_reason": "",
+        "table_count": table_count,
+        # Non-SQL tool caching + budgets (to avoid redundant LLM loops)
+        "tool_cache": {},  # (tool_name, normalized_args) -> result string
+        "tool_call_counts": {},  # tool_name -> int
+        "tool_call_limits": {
+            "search_schema": 2,
+            "get_table_info": 3,
+            "get_column_values": 3,
+            "get_table_relationships": 1,
+            "aggregate_data": 2,
+        },
     }
 
-    # Dynamic row limit
-    max_rows = 2000
-    if token_budget:
-        available = token_budget.get("available_for_tools", 100000)
-        tokens_per_row = 150
-        usable_budget = int(available * 0.7)
-        max_rows = max(20, min(2000, usable_budget // tokens_per_row))
+    max_rows = sql_max_rows_from_budget(token_budget)
 
     _ctx = ctx.to_dict() if ctx else {}
     _task_id = ctx.task_id if ctx else ""
@@ -92,7 +104,15 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
 
     # Create all tools
     sql_tools = create_sql_executor(
-        db, tool_state, ctx, _status, _ctx, _quote_ident, _full_table, _select_top, max_rows
+        db,
+        tool_state,
+        ctx,
+        _status,
+        _ctx,
+        _quote_ident,
+        _full_table,
+        _select_top,
+        max_rows,
     )
     if not isinstance(sql_tools, list):
         sql_tools = [sql_tools]
@@ -100,17 +120,18 @@ def create_tools(db, usable_tables: list[str], ctx=None, token_budget=None):
     tools = [
         # Core database tools
         *sql_tools,
-        create_table_info_tool(db, ctx, _status, _ctx, _quote_ident, _full_table),
-        create_schema_search_tool(db, usable_tables, ctx, _status, _ctx),
-        create_table_stats_tool(db, ctx, _status, _ctx, _full_table, _quote_ident),
-        create_column_values_tool(db, ctx, _status, _ctx, _full_table, _quote_ident, _select_top),
-        create_table_relationships_tool(db, ctx, _status, _ctx),
-        # Analytics tools
-        create_data_quality_tool(db, ctx, _status, _ctx, _full_table, _quote_ident),
-        create_trend_analysis_tool(db, ctx, _status, _ctx, _full_table, _quote_ident, _select_top),
-        create_aggregation_tool(db, ctx, _status, _ctx, _full_table, _quote_ident, _select_top),
-        create_correlation_tool(db, ctx, _status, _ctx, _full_table, _quote_ident),
-        create_outlier_detection_tool(db, ctx, _status, _ctx, _full_table, _quote_ident),
+        create_table_info_tool(
+            db, tool_state, ctx, _status, _ctx, _quote_ident, _full_table
+        ),
+        create_schema_search_tool(db, usable_tables, tool_state, ctx, _status, _ctx),
+        create_column_values_tool(
+            db, tool_state, ctx, _status, _ctx, _full_table, _quote_ident, _select_top
+        ),
+        create_table_relationships_tool(db, tool_state, ctx, _status, _ctx),
+        # Generic grouped summaries without exposing many specialized tools.
+        create_aggregation_tool(
+            db, tool_state, ctx, _status, _ctx, _full_table, _quote_ident, _select_top
+        ),
     ]
 
     return tools, tool_state

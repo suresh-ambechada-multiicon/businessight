@@ -18,12 +18,10 @@ Usage:
     }})
 """
 
-import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass
@@ -36,7 +34,7 @@ class RequestContext:
     model: str = ""
     query: str = ""
     db_uri_hash: str = ""  # Hashed for security — never log raw URI
-    task_id: str = ""      # Celery task ID — used for status channel
+    task_id: str = ""  # Celery task ID — used for status channel
     start_time: float = field(default_factory=time.time)
 
     def elapsed_ms(self) -> float:
@@ -51,28 +49,8 @@ class RequestContext:
             "client_ip": self.client_ip,
             "model": self.model,
             "db_uri_hash": self.db_uri_hash,
+            "task_id": self.task_id,
         }
-
-
-class JSONFormatter(logging.Formatter):
-    """Formats log records as single-line JSON for file output."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        log_entry = {
-            "timestamp": self.formatTime(record, self.datefmt),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-        }
-
-        # Merge structured data from extra={"data": {...}}
-        if hasattr(record, "data") and isinstance(record.data, dict):
-            log_entry.update(record.data)
-
-        if record.exc_info and record.exc_info[0]:
-            log_entry["exception"] = self.formatException(record.exc_info)
-
-        return json.dumps(log_entry, default=str)
 
 
 class ConsoleFormatter(logging.Formatter):
@@ -88,7 +66,8 @@ class ConsoleFormatter(logging.Formatter):
         # Append structured data as key=value pairs
         if hasattr(record, "data") and isinstance(record.data, dict):
             pairs = " ".join(
-                f"{k}={v}" for k, v in record.data.items()
+                f"{k}={v}"
+                for k, v in record.data.items()
                 if k not in ("request_id",) and v  # skip noisy/empty fields
             )
             if pairs:

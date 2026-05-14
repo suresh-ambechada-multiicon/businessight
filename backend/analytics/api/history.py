@@ -49,15 +49,65 @@ def get_sessions(request):
 
 
 @router.get("/history/")
-def get_history(request, session_id: str = None, limit: int = 200, offset: int = 0):
+def get_history(request, session_id: str = "", limit: int = 200, offset: int = 0):
     """Return history for a session."""
     qs = QueryHistory.objects.filter(is_deleted=False)
-    if session_id is not None:
+    if session_id != "":
         qs = qs.filter(session_id=session_id)
     history = list(qs.order_by("-created_at")[offset : offset + limit])
 
     res = []
     for h in history:
+        stored_blocks = h.result_blocks if isinstance(h.result_blocks, list) else []
+        if stored_blocks:
+            sanitized_blocks = []
+            for block in stored_blocks:
+                sb = {"kind": block.get("kind", "text")}
+                if block.get("title"):
+                    sb["title"] = block["title"]
+                if block.get("text"):
+                    sb["text"] = block["text"]
+                if block.get("sql_query"):
+                    sb["sql_query"] = block["sql_query"]
+                if block.get("chart_config"):
+                    sb["chart_config"] = block["chart_config"]
+                if isinstance(block.get("raw_data"), list):
+                    sb["raw_data"] = block["raw_data"][:1000]
+                sanitized_blocks.append(sb)
+            result_blocks = sanitized_blocks
+        else:
+            result_blocks = [
+                *(
+                    [
+                        {
+                            "kind": "text",
+                            "text": h.report,
+                        }
+                    ]
+                    if h.report
+                    else []
+                ),
+                *(
+                    [
+                        {
+                            "kind": "chart",
+                            "chart_config": h.chart_config,
+                        }
+                    ]
+                    if h.chart_config
+                    else []
+                ),
+                *(
+                    [
+                        {
+                            "kind": "table",
+                            "raw_data": h.raw_data[:1000] if h.raw_data else [],
+                        }
+                    ]
+                    if h.raw_data
+                    else []
+                ),
+            ]
         item = {
             "id": h.id,
             "session_id": h.session_id,
@@ -71,47 +121,19 @@ def get_history(request, session_id: str = None, limit: int = 200, offset: int =
                 "sql_query": h.sql_query,
                 "execution_time": h.execution_time or 0.0,
                 "has_data": bool(h.raw_data and len(h.raw_data) > 0),
-                "result_blocks": [
-                    *(
-                        [
-                            {
-                                "kind": "text",
-                                "text": h.report,
-                            }
-                        ]
-                        if h.report
-                        else []
-                    ),
-                    *(
-                        [
-                            {
-                                "kind": "chart",
-                                "chart_config": h.chart_config,
-                            }
-                        ]
-                        if h.chart_config
-                        else []
-                    ),
-                    *(
-                        [
-                            {
-                                "kind": "table",
-                                "raw_data": h.raw_data[:1000],
-                            }
-                        ]
-                        if h.raw_data
-                        else []
-                    ),
-                ],
+                "result_blocks": result_blocks,
             },
             "usage": {
                 "input_tokens": h.input_tokens or 0,
                 "output_tokens": h.output_tokens or 0,
+                "thinking_tokens": h.thinking_tokens or 0,
                 "estimated_cost": h.estimated_cost or 0,
             }
             if h.input_tokens
             else None,
         }
+        if h.thinking_steps:
+            item["thinking_steps"] = h.thinking_steps
         if getattr(h, "agent_trace", None):
             item["agent_trace"] = h.agent_trace
         res.append(item)

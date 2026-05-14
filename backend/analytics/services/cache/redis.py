@@ -15,6 +15,7 @@ from django.core.cache import cache
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
+from analytics.constants import ENGINE_MAX_POOL_SIZE, SCHEMA_CACHE_TTL
 from analytics.services.logger import get_logger
 
 logger = get_logger("cache")
@@ -24,10 +25,6 @@ logger = get_logger("cache")
 # Engines are reused across requests for the same DB.
 _engine_pool: dict[str, tuple[Engine, float]] = {}
 _engine_lock = threading.Lock()
-_MAX_POOL_SIZE = 20  # Evict least-recently-used engines beyond this
-
-# Cache TTL for schema discovery
-SCHEMA_CACHE_TTL = 3600  # 1 hour
 
 
 def get_db_uri_hash(db_uri: str) -> str:
@@ -37,15 +34,21 @@ def get_db_uri_hash(db_uri: str) -> str:
 
 # ── Schema Cache ────────────────────────────────────────────────────────
 
+
 def get_cached_tables(db_uri_hash: str) -> list[str] | None:
     """Retrieve cached table list from Redis. Returns None on miss."""
     cache_key = f"schema:tables:{db_uri_hash}"
     result = cache.get(cache_key)
     if result is not None:
-        logger.debug("Schema cache HIT", extra={"data": {
-            "db_uri_hash": db_uri_hash,
-            "table_count": len(result),
-        }})
+        logger.debug(
+            "Schema cache HIT",
+            extra={
+                "data": {
+                    "db_uri_hash": db_uri_hash,
+                    "table_count": len(result),
+                }
+            },
+        )
     return result
 
 
@@ -53,11 +56,16 @@ def set_cached_tables(db_uri_hash: str, tables: list[str]):
     """Store table list in Redis cache."""
     cache_key = f"schema:tables:{db_uri_hash}"
     cache.set(cache_key, tables, timeout=SCHEMA_CACHE_TTL)
-    logger.info("Schema cached", extra={"data": {
-        "db_uri_hash": db_uri_hash,
-        "table_count": len(tables),
-        "ttl_seconds": SCHEMA_CACHE_TTL,
-    }})
+    logger.info(
+        "Schema cached",
+        extra={
+            "data": {
+                "db_uri_hash": db_uri_hash,
+                "table_count": len(tables),
+                "ttl_seconds": SCHEMA_CACHE_TTL,
+            }
+        },
+    )
 
 
 def get_cached_schema(db_uri_hash: str) -> str | None:
@@ -72,16 +80,23 @@ def set_cached_schema(db_uri_hash: str, schema_name: str):
 
 def get_cached_schema_context(db_uri_hash: str) -> str | None:
     """Retrieve the full schema context string from cache."""
-    return cache.get(f"schema:context:{db_uri_hash}")
+    return cache.get(f"schema:context:full:v2:{db_uri_hash}")
 
 
 def set_cached_schema_context(db_uri_hash: str, context: str):
     """Store the full schema context string in cache."""
-    cache.set(f"schema:context:{db_uri_hash}", context, timeout=SCHEMA_CACHE_TTL)
-    logger.info("Schema context cached", extra={"data": {
-        "db_uri_hash": db_uri_hash,
-        "context_length": len(context),
-    }})
+    cache.set(
+        f"schema:context:full:v2:{db_uri_hash}", context, timeout=SCHEMA_CACHE_TTL
+    )
+    logger.info(
+        "Schema context cached",
+        extra={
+            "data": {
+                "db_uri_hash": db_uri_hash,
+                "context_length": len(context),
+            }
+        },
+    )
 
 
 def get_cached_column_info(db_uri_hash: str, table_name: str) -> str | None:
@@ -99,10 +114,24 @@ def invalidate_schema_cache(db_uri_hash: str):
     cache.delete(f"schema:tables:{db_uri_hash}")
     cache.delete(f"schema:active:{db_uri_hash}")
     cache.delete(f"schema:context:{db_uri_hash}")
-    logger.info("Schema cache invalidated", extra={"data": {"db_uri_hash": db_uri_hash}})
+    cache.delete(f"schema:context:full:v2:{db_uri_hash}")
+    logger.info(
+        "Schema cache invalidated", extra={"data": {"db_uri_hash": db_uri_hash}}
+    )
+
+
+def get_cached_sql_result(db_uri_hash: str, query_hash: str) -> list[dict] | None:
+    """Retrieve cached read-only SQL result."""
+    return cache.get(f"sql_cache:{db_uri_hash}:{query_hash}")
+
+
+def set_cached_sql_result(db_uri_hash: str, query_hash: str, data: list[dict]):
+    """Store read-only SQL result in cache for 15 minutes."""
+    cache.set(f"sql_cache:{db_uri_hash}:{query_hash}", data, timeout=900)
 
 
 # ── Engine Pool ─────────────────────────────────────────────────────────
+
 
 def get_or_create_engine(db_uri: str, engine_args: dict) -> Engine:
     """
@@ -117,28 +146,40 @@ def get_or_create_engine(db_uri: str, engine_args: dict) -> Engine:
         if uri_hash in _engine_pool:
             engine, _ = _engine_pool[uri_hash]
             _engine_pool[uri_hash] = (engine, now)  # Update LRU timestamp
-            logger.debug("Engine reused from pool", extra={"data": {"db_uri_hash": uri_hash}})
+            logger.debug(
+                "Engine reused from pool", extra={"data": {"db_uri_hash": uri_hash}}
+            )
             return engine
 
         # Evict oldest entries if pool is full
-        if len(_engine_pool) >= _MAX_POOL_SIZE:
+        if len(_engine_pool) >= ENGINE_MAX_POOL_SIZE:
             oldest_hash = min(_engine_pool, key=lambda k: _engine_pool[k][1])
             old_engine, _ = _engine_pool.pop(oldest_hash)
             try:
                 old_engine.dispose()
             except Exception:
                 pass
-            logger.info("Engine evicted (pool full)", extra={"data": {
-                "evicted": oldest_hash,
-                "pool_size": len(_engine_pool),
-            }})
+            logger.info(
+                "Engine evicted (pool full)",
+                extra={
+                    "data": {
+                        "evicted": oldest_hash,
+                        "pool_size": len(_engine_pool),
+                    }
+                },
+            )
 
         engine = create_engine(db_uri, **engine_args)
         _engine_pool[uri_hash] = (engine, now)
-        logger.info("New engine created", extra={"data": {
-            "db_uri_hash": uri_hash,
-            "pool_size": len(_engine_pool),
-        }})
+        logger.info(
+            "New engine created",
+            extra={
+                "data": {
+                    "db_uri_hash": uri_hash,
+                    "pool_size": len(_engine_pool),
+                }
+            },
+        )
         return engine
 
 

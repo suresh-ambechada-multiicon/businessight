@@ -1,35 +1,20 @@
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
-import { Sidebar } from "./components/Sidebar";
-import { MainContent } from "./components/MainContent";
-import { RightSidebar } from "./components/RightSidebar";
-import { SettingsModal } from "./components/SettingsModal";
-import { ManagePromptsModal } from "./components/ManagePromptsModal";
+import { Sidebar } from "./components/layout/Sidebar";
+import { MainContent } from "./components/layout/MainContent";
+import { SettingsModal } from "./components/modals/SettingsModal";
+import { ManagePromptsModal } from "./components/modals/ManagePromptsModal";
 import { useAppLogic } from "./hooks/useAppLogic";
 import type { AnalyticsAgentOptions } from "./types";
 import "./App.css";
-
-function readStoredBool(key: string, defaultValue: boolean): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    if (v === null) return defaultValue;
-    return v === "true" || v === "1";
-  } catch {
-    return defaultValue;
-  }
-}
 
 function loadAgentOptions(): AnalyticsAgentOptions {
   try {
     return {
       executorModel: localStorage.getItem("executorModel") || "",
-      verifierModel: localStorage.getItem("verifierModel") || "",
-      verifyAnswer: readStoredBool("verifyAnswer", false),
     };
   } catch {
     return {
       executorModel: "",
-      verifierModel: "",
-      verifyAnswer: false,
     };
   }
 }
@@ -40,16 +25,21 @@ function App() {
       (localStorage.getItem("theme") as "light" | "dark" | "system") || "light"
     );
   });
-  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">("light");
+  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">(
+    "light",
+  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isManagePromptsOpen, setIsManagePromptsOpen] = useState(false);
 
   const [model, setModel] = useState(
     () => localStorage.getItem("model") || "google_genai:gemini-2.5-flash",
   );
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem("apiKey") || "");
+  const [apiKey, setApiKey] = useState(
+    () => localStorage.getItem("apiKey") || "",
+  );
   const [dbUrl, setDbUrl] = useState(() => localStorage.getItem("dbUrl") || "");
-  const [agentOptions, setAgentOptions] = useState<AnalyticsAgentOptions>(loadAgentOptions);
+  const [agentOptions, setAgentOptions] =
+    useState<AnalyticsAgentOptions>(loadAgentOptions);
 
   const {
     currentSessionId,
@@ -92,8 +82,6 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("executorModel", agentOptions.executorModel);
-    localStorage.setItem("verifierModel", agentOptions.verifierModel);
-    localStorage.setItem("verifyAnswer", String(agentOptions.verifyAnswer));
   }, [agentOptions]);
 
   const toggleTheme = useCallback(() => {
@@ -107,7 +95,10 @@ function App() {
   const openSettings = useCallback(() => setIsSettingsOpen(true), []);
   const closeSettings = useCallback(() => setIsSettingsOpen(false), []);
   const openManagePrompts = useCallback(() => setIsManagePromptsOpen(true), []);
-  const closeManagePrompts = useCallback(() => setIsManagePromptsOpen(false), []);
+  const closeManagePrompts = useCallback(
+    () => setIsManagePromptsOpen(false),
+    [],
+  );
 
   const displaySessions = useMemo(() => {
     const list = [...sessions];
@@ -118,7 +109,8 @@ function App() {
   }, [sessions, currentSessionId]);
 
   const currentInteractions = useMemo(
-    () => interactions.filter((i) => (i as any).session_id === currentSessionId),
+    () =>
+      interactions.filter((i) => (i as any).session_id === currentSessionId),
     [interactions, currentSessionId],
   );
 
@@ -152,7 +144,7 @@ function App() {
         setSavedPrompts={setSavedPrompts}
       />
 
-      <RightSidebar interactions={currentInteractions} />
+      {/*<RightSidebar interactions={currentInteractions} />*/}
 
       <SettingsModal
         isOpen={isSettingsOpen}

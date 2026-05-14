@@ -5,34 +5,34 @@ from __future__ import annotations
 from decimal import Decimal
 
 
-def sanitize_row(row):
-    if not isinstance(row, dict):
-        return row
-    clean = {}
-    for key, value in row.items():
-        if isinstance(value, (bytes, memoryview)):
-            clean[key] = "(binary data)"
-        elif isinstance(value, Decimal):
-            clean[key] = float(value)
-        elif hasattr(value, "isoformat"):
-            clean[key] = value.isoformat()
-        elif isinstance(value, (str, int, float, bool)) or value is None:
-            clean[key] = value
-        else:
-            clean[key] = str(value)
-    return clean
-
-
-def sanitize_for_tokens(obj):
+def deep_sanitize(obj):
+    """
+    Recursively convert non-JSON-serializable objects to serializable formats.
+    Handles Decimals, datetimes, binary data, etc.
+    """
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
+    if isinstance(obj, (bytes, memoryview)):
+        return "(binary data)"
     if isinstance(obj, Decimal):
         return float(obj)
     if hasattr(obj, "isoformat"):
         return obj.isoformat()
     if isinstance(obj, dict):
-        return {key: sanitize_for_tokens(value) for key, value in obj.items()}
+        return {str(k): deep_sanitize(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
-        return [sanitize_for_tokens(item) for item in obj]
+        return [deep_sanitize(i) for i in obj]
     return str(obj)
+
+
+def sanitize_row(row):
+    """Sanitize a single database row dictionary."""
+    if not isinstance(row, dict):
+        return deep_sanitize(row)
+    return {str(key): deep_sanitize(value) for key, value in row.items()}
+
+
+def sanitize_for_tokens(obj):
+    """Alias for deep_sanitize for backward compatibility in naming."""
+    return deep_sanitize(obj)
 

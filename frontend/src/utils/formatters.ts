@@ -17,6 +17,78 @@ export const formatTime = (seconds: number) => {
   return `${hrs}h ${remainingMins}m`;
 };
 
+const DEFAULT_USD_TO_INR = 95.63;
+
+const getUsdToInrRate = () => {
+  const rawRate = import.meta.env.VITE_USD_TO_INR;
+  const parsed = Number(rawRate);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_USD_TO_INR;
+};
+
+export const formatUsdAsInr = (usd: number | undefined | null) => {
+  if (typeof usd !== "number" || !Number.isFinite(usd)) return "";
+  const inr = usd * getUsdToInrRate();
+  const formatter = new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: inr < 1 ? 4 : 2,
+    maximumFractionDigits: inr < 1 ? 4 : 2,
+  });
+  return formatter.format(inr);
+};
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
+export const formatDateTimeValue = (value: any) => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toLocaleString("en-IN", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  if (DATE_ONLY_PATTERN.test(raw)) {
+    const date = new Date(`${raw}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleDateString("en-IN", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  }
+
+  if (!ISO_DATE_TIME_PATTERN.test(raw)) return null;
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+export const formatTableCellValue = (value: any, isNumericColumn = false) => {
+  if (value == null) {
+    return isNumericColumn ? "0" : "—";
+  }
+  const formattedDate = formatDateTimeValue(value);
+  if (formattedDate) return formattedDate;
+  if (typeof value === "number") return value.toLocaleString("en-IN");
+  return String(value);
+};
+
 export const formatXAxisDate = (tickItem: any) => {
   if (
     typeof tickItem === "string" &&
@@ -24,9 +96,10 @@ export const formatXAxisDate = (tickItem: any) => {
     tickItem.includes("-")
   ) {
     try {
-      const date = new Date(tickItem);
+      const normalized = tickItem.includes("T") ? tickItem : tickItem.replace(" ", "T");
+      const date = new Date(normalized);
       if (!isNaN(date.getTime())) {
-        return date.toLocaleDateString(undefined, {
+        return date.toLocaleDateString("en-IN", {
           month: "short",
           day: "numeric",
           year: "numeric",

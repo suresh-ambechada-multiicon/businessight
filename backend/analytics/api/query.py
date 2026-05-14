@@ -4,6 +4,7 @@ import redis
 from celery.result import AsyncResult
 from django.conf import settings
 from django.core.cache import cache
+from django.db.models import Q
 from django.http import StreamingHttpResponse
 from ninja import Router, NinjaAPI
 
@@ -51,14 +52,10 @@ def stream_results(request, task_id: str):
         deadline = _time.time() + 310
 
         while _time.time() < deadline:
-            result = redis_client.xread(
-                {stream_key: last_id}, block=2000, count=50
-            )
+            result = redis_client.xread({stream_key: last_id}, block=2000, count=50)
             if not result:
-                if last_id != "0" and not redis_client.exists(
-                    f"heartbeat:{task_id}"
-                ):
-                    yield f'data: {json.dumps({"event": "error", "data": {"message": "Analysis process was interrupted."}})}\n\n'
+                if last_id != "0" and not redis_client.exists(f"heartbeat:{task_id}"):
+                    yield f"data: {json.dumps({'event': 'error', 'data': {'message': 'Analysis process was interrupted.'}})}\n\n"
                     return
                 continue
 
@@ -79,7 +76,7 @@ def stream_results(request, task_id: str):
                 "FAILURE",
                 "REVOKED",
             ]:
-                yield f'data: {json.dumps({"event": "error", "data": {"message": "Analysis task failed or was cancelled."}})}\n\n'
+                yield f"data: {json.dumps({'event': 'error', 'data': {'message': 'Analysis task failed or was cancelled.'}})}\n\n"
                 return
 
     return StreamingHttpResponse(
@@ -92,6 +89,15 @@ def stream_results(request, task_id: str):
 def cancel_query(request, session_id: str):
     """Signal cancellation for all in-progress queries in a session."""
     cache.set(f"cancel_{session_id}", True, timeout=60)
+    from analytics.models import QueryHistory
+
+    QueryHistory.objects.filter(
+        session_id=session_id,
+        is_deleted=False,
+    ).filter(Q(execution_time__isnull=True) | Q(execution_time=0)).update(
+        report="_Analysis cancelled by user._",
+        execution_time=-1,
+    )
     logger.info(
         "Cancel requested",
         extra={

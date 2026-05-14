@@ -1,3 +1,0 @@
-SQL execution timeout added.
-Server-side cursors enabled.
-Regex fallback added for JSON parser.

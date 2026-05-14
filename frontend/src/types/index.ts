@@ -6,6 +6,9 @@ export interface ResultBlock {
   title?: string;
   text?: string;
   sql_query?: string;
+  row_count?: number;
+  total_count?: number;
+  truncated?: boolean;
   chart_config?: {
     type: string;
     x_label?: string;
@@ -13,6 +16,13 @@ export interface ResultBlock {
     data: any;
   };
   raw_data?: any[];
+}
+
+export interface InteractionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  thinking_tokens?: number;
+  estimated_cost?: number;
 }
 
 export interface Interaction {
@@ -24,19 +34,14 @@ export interface Interaction {
   saved_prompt_name?: string;
   result: InteractionResult | null;
   status?: string;
-  usage?: {
-    input_tokens: number;
-    output_tokens: number;
-    estimated_cost: number;
-  };
+  thinking?: string;
+  usage?: InteractionUsage;
   agent_trace?: AgentTraceEntry[] | null;
 }
 
 /** Options sent with each analytics query (Settings → Agent). */
 export interface AnalyticsAgentOptions {
   executorModel: string;
-  verifierModel: string;
-  verifyAnswer: boolean;
 }
 
 export interface InteractionResult {

@@ -20,8 +20,6 @@ export interface AnalyticsQueryPayload {
   session_id: string;
   direct_sql?: string;
   executor_model?: string | null;
-  verifier_model?: string | null;
-  verify_answer?: boolean;
 }
 
 export const api = {

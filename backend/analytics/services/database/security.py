@@ -9,37 +9,10 @@ semicolons, CTEs with side effects, and MSSQL-specific exploits.
 import re
 import sqlparse
 
+from analytics.constants import BLOCKED_PATTERNS
 from analytics.services.logger import get_logger
 
 logger = get_logger("security")
-
-# Patterns that indicate a non-read-only or dangerous query
-BLOCKED_PATTERNS = [
-    r"\bINTO\s+",
-    r"\bINSERT\s+",
-    r"\bUPDATE\s+",
-    r"\bDELETE\s+",
-    r"\bDROP\s+",
-    r"\bALTER\s+",
-    r"\bCREATE\s+",
-    r"\bTRUNCATE\s+",
-    r"\bGRANT\s+",
-    r"\bREVOKE\s+",
-    r"\bEXEC\b",
-    r"\bEXECUTE\b",
-    r"\bxp_\w+",
-    r"\bsp_\w+",
-    r";\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)",
-    # MSSQL-specific attack patterns
-    r"\bWAITFOR\s+DELAY\b",
-    r"\bOPENROWSET\b",
-    r"\bBULK\s+INSERT\b",
-    r"\bOPENDATASOURCE\b",
-    r"\bSHUTDOWN\b",
-    r"\bDBCC\b",
-    r"\bRECONFIGURE\b",
-    r"\bMERGE\b",
-]
 
 _compiled_patterns = [re.compile(p, re.IGNORECASE) for p in BLOCKED_PATTERNS]
 

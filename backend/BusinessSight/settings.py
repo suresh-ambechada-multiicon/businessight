@@ -27,13 +27,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-_INSECURE_KEY = "django-insecure-!!j6gcp+v!tf#mc=+w_5h7av!zb8rvy8)r7haft_5q&!@iprk8"
-SECRET_KEY = os.environ.get("SECRET_KEY", _INSECURE_KEY)
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable must be set in production.")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "True").lower() in ("true", "1", "yes")
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = [
+    h.strip() for h in os.environ.get("ALLOWED_HOSTS", "*").split(",") if h.strip()
+]
 
 
 # Application definition
@@ -129,30 +132,34 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
-CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
-CORS_ALLOW_METHODS = [
-    "DELETE",
-    "GET",
-    "OPTIONS",
-    "PATCH",
-    "POST",
-    "PUT",
+_LOCAL_DEV_ORIGINS = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8080",
 ]
-CORS_ALLOW_HEADERS = [
-    "accept",
-    "accept-encoding",
-    "authorization",
-    "content-type",
-    "dnt",
-    "origin",
-    "user-agent",
-    "x-csrftoken",
-    "x-requested-with",
+_env_cors_origins = [
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()
+]
+_env_csrf_origins = [
+    o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()
+]
+_env_cors_allow_methods = [
+    o.strip() for o in os.getenv("CORS_ALLOW_METHODS", "").split(",") if o.strip()
+]
+_env_cors_allow_headers = [
+    o.strip() for o in os.getenv("CORS_ALLOW_HEADERS", "").split(",") if o.strip()
 ]
 
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = sorted(set(_env_cors_origins + (_LOCAL_DEV_ORIGINS if DEBUG else [])))
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = sorted(set(_env_csrf_origins + (_LOCAL_DEV_ORIGINS if DEBUG else [])))
+CORS_ALLOW_METHODS = sorted(set(_env_cors_allow_methods or ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]))
+CORS_ALLOW_HEADERS = sorted(set(_env_cors_allow_headers or ["accept", "authorization", "content-type", "origin", "x-csrftoken", "x-requested-with"]))
 
 # ── Redis Cache ─────────────────────────────────────────────────────────
 CACHES = {
@@ -167,25 +174,18 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://127.0.0.1:6379/
 CELERY_RESULT_BACKEND = os.environ.get(
     "CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/0"
 )
-CELERY_TASK_TIME_LIMIT = 300  # 5 min max per query
-CELERY_TASK_SOFT_TIME_LIMIT = 240
+CELERY_TASK_TIME_LIMIT = 390  # 6 min query window + cleanup buffer
+CELERY_TASK_SOFT_TIME_LIMIT = 360
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
-# Ensure logs directory exists
-LOGS_DIR = BASE_DIR / "logs"
-LOGS_DIR.mkdir(exist_ok=True)
-
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "json": {
-            "()": "analytics.services.logger.JSONFormatter",
-        },
         "console": {
             "()": "analytics.services.logger.ConsoleFormatter",
         },
@@ -195,29 +195,15 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "console",
         },
-        "analytics_file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOGS_DIR / "analytics.log",
-            "maxBytes": 10 * 1024 * 1024,  # 10 MB
-            "backupCount": 5,
-            "formatter": "json",
-        },
-        "security_file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": LOGS_DIR / "security.log",
-            "maxBytes": 5 * 1024 * 1024,  # 5 MB
-            "backupCount": 3,
-            "formatter": "json",
-        },
     },
     "loggers": {
         "analytics": {
-            "handlers": ["console", "analytics_file"],
+            "handlers": ["console"],
             "level": "DEBUG" if DEBUG else "INFO",
             "propagate": False,
         },
         "analytics.security": {
-            "handlers": ["console", "security_file"],
+            "handlers": ["console"],
             "level": "WARNING",
             "propagate": False,
         },

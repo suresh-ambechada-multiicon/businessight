@@ -22,12 +22,13 @@ except ImportError:
 from analytics.schemas import AnalyticsRequest
 from analytics.services.core import process_analytics_query
 from analytics.services.cache import get_db_uri_hash
+from analytics.services.pipeline.serialization import deep_sanitize, sanitize_row
 from analytics.services.logger import RequestContext
 
 logger = logging.getLogger("analytics.tasks")
 
 
-@shared_task(bind=True, max_retries=0, time_limit=300, soft_time_limit=240)
+@shared_task(bind=True, max_retries=0, time_limit=390, soft_time_limit=360)
 def process_query_task(self, payload_dict: dict, client_ip: str):
     """
     Main Celery task — streams analytics results to a Redis Stream.
@@ -54,35 +55,14 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
     # Signal liveness immediately
     redis_client.setex(heartbeat_key, 300, "alive")
 
-    def sanitize_chunk(chunk):
-        """Convert non-JSON-serializable objects to serializable format."""
-        from datetime import datetime, date, time
-        from decimal import Decimal
-        
-        def convert(obj):
-            if obj is None or isinstance(obj, (str, int, float, bool)):
-                return obj
-            if isinstance(obj, (bytes, memoryview)):
-                return "(binary data)"
-            if isinstance(obj, Decimal):
-                return float(obj)
-            # Check for datetime-like objects using hasattr for isoformat
-            if hasattr(obj, 'isoformat'):
-                return obj.isoformat()
-            if isinstance(obj, dict):
-                return {str(k): convert(v) for k, v in obj.items()}
-            if isinstance(obj, (list, tuple)):
-                return [convert(i) for i in obj]
-            return str(obj)
-        
-        return convert(chunk)
+
 
     try:
         for chunk in process_analytics_query(payload, ctx):
             # Refresh heartbeat on every chunk
             redis_client.setex(heartbeat_key, 300, "alive")
             # Sanitize chunk for JSON serialization and write to Redis Stream
-            sanitized = sanitize_chunk(chunk)
+            sanitized = deep_sanitize(chunk)
             redis_client.xadd(stream_key, {"data": json.dumps(sanitized)}, maxlen=500)
 
         # Pipeline completed normally — write done sentinel
@@ -90,7 +70,7 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
 
     except SoftTimeLimitExceeded:
         logger.warning("Task hit soft time limit", extra={"data": ctx.to_dict()})
-        _write_error(redis_client, stream_key, "Analysis timed out (exceeded 4 minutes).")
+        _write_error(redis_client, stream_key, "Analysis timed out (exceeded 6 minutes).")
         _write_done(redis_client, stream_key, self.request.id)
         _mark_history_failed(ctx.task_id, "Analysis timed out.")
 
@@ -145,6 +125,5 @@ def _mark_history_failed(task_id: str, error_msg: str):
         )
     except Exception:
         pass
-
 
 
