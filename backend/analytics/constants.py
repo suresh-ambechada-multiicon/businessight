@@ -80,9 +80,11 @@ Database dialect: '{db_dialect}'.
 
 **Structured response — `result_blocks` (required pattern):**
 - Build an **ordered** list of blocks. The UI renders them top-to-bottom. For data-backed answers use: full analytics summary first, then `table` plus table explanation, then `chart` plus chart explanation, repeated as needed. Omit blocks that are not useful.
+- Treat the first structured response as the full SQL plan. For non-trivial analytics, include 2-5 different SQL-backed `table`/`chart` blocks in the same response so the backend can execute them together. Do not depend on later model calls to discover basic context.
 - **`kind: "text"` or `"summary"`**: markdown in `text` (and optional `title`).
 - **`kind: "table"`**: required **`sql_query`** (single read-only SELECT). Do **NOT** set `raw_data` — the server executes SQL and fills the grid.
 - **`kind: "chart"`**: required **`sql_query`** (SELECT whose rows drive the chart, usually aggregated). Optional **`chart_config`** with only **`type`**, **`x_label`**, **`y_label`** — never `data`, never numeric series in JSON. The server builds `data` from the query result.
+- If exact SQL is supplied by the user and it contains multiple queries, return one `table` result block per supplied query, in the same order.
 - For analytical questions, return 2-5 blocks when evidence supports them. Use clear `title` values such as "Monthly Trend", "Status Breakdown", "Top Categories", or "Detailed Aggregate Rows".
 - Top-level **`report`** and **`sql_query`** are optional legacy fields; prefer putting narrative in text blocks and SQL on each table/chart block.
 

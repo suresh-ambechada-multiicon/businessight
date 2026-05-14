@@ -112,6 +112,23 @@ export const InteractionItem = memo(
         return textOk || hasChart || hasTable;
       });
     }, [displayBlocks, result]);
+    const savedSqlCommand = React.useMemo(() => {
+      const sqlBlocks = (displayBlocks as ResultBlock[]).filter((block) => {
+        if (!block.sql_query?.trim()) return false;
+        if (block.kind === "table") return Array.isArray(block.raw_data) && block.raw_data.length > 0;
+        if (block.kind === "chart") return hasChartData(block);
+        return false;
+      });
+
+      if (sqlBlocks.length === 0) return result?.sql_query || "";
+      if (sqlBlocks.length === 1) return sqlBlocks[0].sql_query || "";
+      return sqlBlocks
+        .map((block, blockIdx) => {
+          const title = block.title ? ` (${block.title})` : "";
+          return `-- Query ${blockIdx + 1}${title}\n${block.sql_query}`;
+        })
+        .join("\n\n");
+    }, [displayBlocks, result?.sql_query]);
     const [fullscreenChartKey, setFullscreenChartKey] = useState<string | null>(null);
     const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
     const [sqlModal, setSqlModal] = useState<{ title: string; sql: string } | null>(null);
@@ -131,7 +148,7 @@ export const InteractionItem = memo(
     }, [fullscreenChartKey]);
 
     const handleSavePrompt = () => {
-      if (!result?.sql_query) return;
+      if (!savedSqlCommand) return;
       setIsSaveModalOpen(true);
     };
 
@@ -300,7 +317,7 @@ export const InteractionItem = memo(
                     ) : null}
                   </>
                 )}
-                {result.sql_query && (
+                {savedSqlCommand && (
                   <button
                     onClick={handleSavePrompt}
                     title="Save as Prompt"
@@ -339,14 +356,14 @@ export const InteractionItem = memo(
           </div>
         )}
 
-        {isSaveModalOpen && result?.sql_query && (
+        {isSaveModalOpen && savedSqlCommand && (
           <React.Suspense fallback={null}>
             <SavePromptModal
               isOpen={isSaveModalOpen}
               onClose={() => setIsSaveModalOpen(false)}
               defaultName={interaction.query.slice(0, 50)}
               query={interaction.query}
-              sqlCommand={result.sql_query}
+              sqlCommand={savedSqlCommand}
               setSavedPrompts={setSavedPrompts}
             />
           </React.Suspense>

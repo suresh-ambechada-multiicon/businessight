@@ -47,6 +47,11 @@ from analytics.services.pipeline.hydration import hydrate_analytics_result
 from analytics.services.pipeline.finalization import PipelineFinalizer
 from analytics.services.pipeline.runware_loop import RunwareExecutionLoop
 from analytics.services.prompts import SYSTEM_PROMPT
+from analytics.services.sql_utils import (
+    extract_sql_blocks_from_combined,
+    format_sql_blocks,
+    normalize_sql_key,
+)
 from analytics.services.status import send_status
 from analytics.services.tokens import estimate_query_budget
 
@@ -125,8 +130,13 @@ class AnalyticsPipeline:
         formatted_prompt = SYSTEM_PROMPT.replace("{db_dialect}", detect_dialect(self.db_uri)).replace("{db_schema}", schema_context)
         
         agent_query = self.payload.query
-        if getattr(self.payload, "direct_sql", None):
-            agent_query += f"\n\nExecute this exact SQL query:\n```sql\n{self.payload.direct_sql}\n```"
+        direct_sql_blocks = self._direct_sql_blocks()
+        if direct_sql_blocks:
+            sql_label = "queries" if len(direct_sql_blocks) > 1 else "query"
+            agent_query += (
+                f"\n\nExecute these exact SQL {sql_label} as separate output blocks "
+                f"and preserve their order:\n```sql\n{format_sql_blocks(direct_sql_blocks)}\n```"
+            )
 
         messages = build_messages(self.payload.session_id, agent_query)
         budget = estimate_query_budget(model_config, formatted_prompt, messages)
@@ -293,6 +303,24 @@ class AnalyticsPipeline:
             cache.delete(f"cancel_{self.payload.session_id}")
             return True
         return False
+
+    def _direct_sql_blocks(self) -> list[str]:
+        sql_blocks: list[str] = []
+        for sql in getattr(self.payload, "direct_sqls", None) or []:
+            sql_blocks.extend(extract_sql_blocks_from_combined(sql))
+        direct_sql = getattr(self.payload, "direct_sql", None)
+        if direct_sql:
+            sql_blocks.extend(extract_sql_blocks_from_combined(direct_sql))
+
+        out: list[str] = []
+        seen: set[str] = set()
+        for sql in sql_blocks:
+            key = normalize_sql_key(sql)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(sql)
+        return out
 
     def _finalize_cancellation(self):
         PipelineFinalizer(history_entry=self.history_entry, ctx=self.ctx).cancel()

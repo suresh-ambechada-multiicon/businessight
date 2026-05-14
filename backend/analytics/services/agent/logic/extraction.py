@@ -6,6 +6,7 @@ from analytics.schemas import AnalyticsResponse
 from analytics.services.logger import get_logger
 from analytics.services.sql_utils import (
     extract_first_sql_from_combined,
+    extract_sql_blocks_from_combined,
     normalize_sql_key,
 )
 
@@ -66,9 +67,12 @@ def _normalize_result_blocks(
     out: list[dict] = []
     if (fallback_report or "").strip():
         out.append({"kind": "text", "text": fallback_report.strip()})
-    fq = extract_first_sql_from_combined(fallback_sql_query or "")
-    if fq:
-        out.append({"kind": "table", "sql_query": fq})
+    sql_blocks = extract_sql_blocks_from_combined(fallback_sql_query or "")
+    for idx, sql in enumerate(sql_blocks, 1):
+        item = {"kind": "table", "sql_query": sql}
+        if len(sql_blocks) > 1:
+            item["title"] = f"Query {idx}"
+        out.append(item)
     return out
 
 
@@ -154,7 +158,8 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
         if not sql_query:
             sql_query = combined_sql.strip()
 
-    sql_query = extract_first_sql_from_combined(sql_query) if sql_query else ""
+    sql_query_blob = sql_query
+    sql_query = extract_first_sql_from_combined(sql_query_blob) if sql_query_blob else ""
 
     preview_raw: list = []
     if sql_query:
@@ -167,7 +172,7 @@ def extract_final_result(stream_data: dict, tool_state: dict, ctx=None) -> dict:
     result_blocks = _normalize_result_blocks(
         ans if isinstance(ans, dict) else None,
         fallback_report=report,
-        fallback_sql_query=sql_query or combined_sql,
+        fallback_sql_query=sql_query_blob or combined_sql,
     )
 
     if not report and result_blocks:

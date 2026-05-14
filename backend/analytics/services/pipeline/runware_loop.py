@@ -64,7 +64,7 @@ class RunwareExecutionLoop:
 
             is_first = round_idx == 0
             if is_first:
-                send_status(self.ctx.task_id, "Generating SQL with Runware...")
+                send_status(self.ctx.task_id, "Generating SQL evidence pack with Runware...")
                 value_search = search_database_values(
                     self.db,
                     user_query=self.payload.query,
@@ -137,6 +137,8 @@ class RunwareExecutionLoop:
             if result is None:
                 result = self.dedupe_result_blocks(hydrated)
                 executed_sql_keys.update(self.result_sql_keys(hydrated))
+                if self.has_sufficient_evidence(result):
+                    break
                 continue
 
             result, new_sql_count = self.merge_results(
@@ -147,6 +149,8 @@ class RunwareExecutionLoop:
             if new_sql_count == 0:
                 break
             executed_sql_keys.update(self.result_sql_keys(hydrated))
+            if self.has_sufficient_evidence(result):
+                break
 
         return result or empty_runware_result(), runware_usage
 
@@ -187,6 +191,62 @@ class RunwareExecutionLoop:
             == 0
             for block in blocks
         )
+
+    def has_sufficient_evidence(self, result: dict) -> bool:
+        if self.needs_sql_retry(result):
+            return False
+        count = self.non_empty_data_block_count(result)
+        if self.wants_multi_evidence():
+            return count >= 2
+        return count >= 1
+
+    @staticmethod
+    def non_empty_data_block_count(result: dict) -> int:
+        count = 0
+        for block in result.get("result_blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("kind") not in {"table", "chart"} or not block.get("sql_query"):
+                continue
+            row_count = int(
+                block.get("row_count")
+                or (len(block.get("raw_data")) if isinstance(block.get("raw_data"), list) else 0)
+                or 0
+            )
+            if row_count > 0:
+                count += 1
+        return count
+
+    def wants_multi_evidence(self) -> bool:
+        query = str(getattr(self.payload, "query", "") or "").lower()
+        if getattr(self.payload, "direct_sql", None) or getattr(self.payload, "direct_sqls", None):
+            return False
+        multi_terms = {
+            "analysis",
+            "analyze",
+            "detail",
+            "details",
+            "trend",
+            "compare",
+            "comparison",
+            "breakdown",
+            "summary",
+            "overview",
+            "insight",
+            "performance",
+            "ranking",
+            "top",
+            "highest",
+            "lowest",
+            "monthly",
+            "quarterly",
+            "yearly",
+            "wise",
+            " by ",
+            " per ",
+            " grouped ",
+        }
+        return any(term in query for term in multi_terms)
 
     @staticmethod
     def result_sql_keys(result: dict) -> set[str]:

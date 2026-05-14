@@ -9,7 +9,11 @@ from analytics.services.pipeline.sql_execution import (
     rows_from_cache_or_run,
     run_readonly_select,
 )
-from analytics.services.sql_utils import extract_first_sql_from_combined
+from analytics.services.sql_utils import (
+    extract_sql_blocks_from_combined,
+    format_sql_blocks,
+    normalize_sql_key,
+)
 
 __all__ = ["hydrate_analytics_result", "run_readonly_select"]
 
@@ -64,14 +68,38 @@ class ResultHydrator:
     def input_blocks(self) -> list[dict]:
         blocks = list(self.result.get("result_blocks") or [])
         if not blocks:
-            sql_flat = extract_first_sql_from_combined(self.result.get("sql_query") or "")
+            sql_blocks = extract_sql_blocks_from_combined(self.result.get("sql_query") or "")
             if self.preserved_report:
                 blocks.append({"kind": "text", "text": self.preserved_report})
-            if sql_flat:
-                blocks.append({"kind": "table", "sql_query": sql_flat})
+            for idx, sql in enumerate(sql_blocks, 1):
+                item = {"kind": "table", "sql_query": sql}
+                if len(sql_blocks) > 1:
+                    item["title"] = f"Query {idx}"
+                blocks.append(item)
         if not blocks and self.preserved_report:
             blocks = [{"kind": "text", "text": self.preserved_report}]
-        return [block for block in blocks if isinstance(block, dict)]
+        return self.expand_multi_sql_blocks(
+            [block for block in blocks if isinstance(block, dict)]
+        )
+
+    @staticmethod
+    def expand_multi_sql_blocks(blocks: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        for block in blocks:
+            kind = str(block.get("kind") or "text").lower()
+            if kind not in {"table", "chart"}:
+                out.append(block)
+                continue
+            sql_blocks = extract_sql_blocks_from_combined(str(block.get("sql_query") or ""))
+            if len(sql_blocks) <= 1:
+                out.append(block)
+                continue
+            base_title = str(block.get("title") or "").strip()
+            for idx, sql in enumerate(sql_blocks, 1):
+                item = {**block, "sql_query": sql}
+                item["title"] = f"{base_title} {idx}" if base_title else f"Query {idx}"
+                out.append(item)
+        return out
 
     def hydrate_block(self, block: dict) -> list[dict]:
         kind = str(block.get("kind") or "text").lower()
@@ -179,20 +207,24 @@ class ResultHydrator:
         elif self.preserved_report:
             self.result["report"] = self.preserved_report
 
-        first_sql = ""
+        sql_queries: list[str] = []
+        seen_sql: set[str] = set()
         first_rows: list | None = None
         first_chart = None
         for block in out_blocks:
+            if block.get("kind") in {"table", "chart"} and block.get("sql_query"):
+                sql_key = normalize_sql_key(str(block["sql_query"]))
+                if sql_key and sql_key not in seen_sql:
+                    seen_sql.add(sql_key)
+                    sql_queries.append(str(block["sql_query"]))
             if block.get("kind") == "table" and block.get("sql_query"):
-                if not first_sql:
-                    first_sql = str(block["sql_query"])
                 if first_rows is None and isinstance(block.get("raw_data"), list):
                     first_rows = block["raw_data"]
             if block.get("kind") == "chart" and block.get("chart_config") and first_chart is None:
                 first_chart = block.get("chart_config")
 
-        if first_sql:
-            self.result["sql_query"] = first_sql
+        if sql_queries:
+            self.result["sql_query"] = format_sql_blocks(sql_queries)
         self.result["raw_data"] = first_rows if first_rows is not None else []
         self.result["chart_config"] = first_chart
 

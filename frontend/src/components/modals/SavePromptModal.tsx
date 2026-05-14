@@ -51,19 +51,11 @@ export const SavePromptModal: React.FC<SavePromptModalProps> = ({
     setIsSaving(true);
     setError(null);
 
-    // Try to extract just the SQL if it has "-- Query X" wrappers
-    let cleanSql = sqlCommand;
-    const matches = [...sqlCommand.matchAll(/-- Query \d+(?: \([^)]+\))?\s*\n([\s\S]*?)(?=-- Query \d+|$)/g)];
-    if (matches.length > 0) {
-      // Just save the primary query (usually the first one, or the one doing the main SELECT)
-      cleanSql = matches[0][1].trim();
-    }
-
     try {
       const newPrompt = await api.createSavedPrompt({
         name: name.trim(),
         query,
-        sql_command: cleanSql,
+        sql_command: sqlCommand.trim(),
       });
 
       if (setSavedPrompts) {

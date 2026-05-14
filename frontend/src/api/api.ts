@@ -19,6 +19,7 @@ export interface AnalyticsQueryPayload {
   db_url: string;
   session_id: string;
   direct_sql?: string;
+  direct_sqls?: string[];
   executor_model?: string | null;
 }
 

@@ -36,6 +36,10 @@ class AnalyticsRequest(BaseModel):
         default=None,
         description="Pre-defined SQL to execute directly instead of letting AI generate it.",
     )
+    direct_sqls: list[str] | None = Field(
+        default=None,
+        description="Optional multiple pre-defined SQL queries to execute as separate result blocks.",
+    )
     llm_config: LLMConfig = Field(default_factory=LLMConfig)
 
 
@@ -140,7 +144,8 @@ class AnalyticsResponse(BaseModel):
             "Ordered blocks the UI renders top-to-bottom. Interleave as needed, e.g. "
             "summary → KPI table → trend chart → category chart → supporting table. Each `table` or `chart` block "
             "MUST set `sql_query` (read-only SELECT); never put `raw_data` or chart `data` in the response — "
-            "the server fetches rows and builds charts. Chart and table blocks can use different SQL queries."
+            "the server fetches rows and builds charts. Chart and table blocks can use different SQL queries. "
+            "For non-trivial analytics, return the full multi-SQL evidence pack in this first response."
         ),
     )
 
