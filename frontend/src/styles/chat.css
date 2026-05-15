@@ -107,34 +107,13 @@
 }
 
 .status-label {
-  overflow: visible;
+  display: block;
+  max-height: 7.5rem;
+  overflow: auto;
   word-break: break-word;
-  flex: 1;
-}
-
-.status-text {
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
   white-space: pre-wrap;
-  word-break: break-all;
-  font-family: var(--font-mono);
-  opacity: 0.9;
-  max-height: 200px;
-  overflow-y: auto;
-  padding: var(--space-3);
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  margin-bottom: var(--space-3);
-}
-
-.status-text::-webkit-scrollbar {
-  width: 4px;
-}
-
-.status-text::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 4px;
+  flex: 1;
+  padding-right: var(--space-1);
 }
 
 .execution-timer {
@@ -508,6 +487,8 @@
 .thinking-content.live {
   border-top: 1px solid var(--border-color);
   margin-top: var(--space-1);
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
 }
 
 .cost-badge {
@@ -521,4 +502,91 @@
 
 .report-meta-item.interrupted {
   color: var(--danger-color);
+}
+
+@media (max-width: 768px) {
+  .chat-scroll-area {
+    max-width: none;
+    padding: var(--space-2) 0 var(--space-4);
+  }
+
+  .interaction-wrapper {
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .chat-message {
+    gap: var(--space-2);
+  }
+
+  .user-message {
+    max-width: 94%;
+  }
+
+  .message-content {
+    font-size: 0.95rem;
+  }
+
+  .user-message .message-content {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .markdown-content ul,
+  .markdown-content ol {
+    margin-left: var(--space-4);
+  }
+
+  .input-area {
+    padding: var(--space-2);
+  }
+
+  .input-area-active {
+    padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+  }
+
+  .input-area-initial {
+    width: calc(100% - var(--space-4));
+  }
+
+  .query-input-wrapper {
+    border-radius: 18px;
+    padding: 8px 10px;
+  }
+
+  .query-input {
+    min-width: 0;
+    font-size: 0.95rem;
+  }
+
+  .query-input::placeholder {
+    font-size: 0.9rem;
+  }
+
+  .saved-prompts-menu {
+    width: calc(100vw - var(--space-4));
+    max-width: none;
+  }
+
+  .report-block-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sql-modal-backdrop {
+    padding: var(--space-2);
+  }
+
+  .sql-modal {
+    width: 100%;
+    max-height: 88vh;
+  }
+
+  .sql-modal-header {
+    padding: var(--space-3);
+  }
+
+  .sql-modal-code {
+    padding: var(--space-3);
+    font-size: 0.76rem;
+  }
 }

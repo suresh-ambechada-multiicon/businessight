@@ -85,9 +85,14 @@ class ChartConfig(BaseModel):
 class ChartConfigSkeleton(BaseModel):
     """Chart metadata from the agent only — no `data`; the server builds datasets from SQL rows."""
 
-    type: str = Field(description="e.g. bar, line, area, pie, scatter")
-    x_label: str = Field(default="", description="X axis label")
-    y_label: str = Field(default="", description="Y axis label")
+    type: str = Field(
+        description=(
+            "Chart type selected for the SQL shape: line/area for time series, bar for category/ranking, "
+            "stacked-bar/stacked-area for composition, pie for small part-to-whole, composed for mixed metrics, scatter for two numeric measures."
+        )
+    )
+    x_label: str = Field(default="", description="Readable X axis label from the chart SQL label/time column")
+    y_label: str = Field(default="", description="Readable Y axis label from the chart SQL metric column(s)")
 
 
 class AgentResultBlock(BaseModel):
@@ -145,7 +150,10 @@ class AnalyticsResponse(BaseModel):
             "summary → KPI table → trend chart → category chart → supporting table. Each `table` or `chart` block "
             "MUST set `sql_query` (read-only SELECT); never put `raw_data` or chart `data` in the response — "
             "the server fetches rows and builds charts. Chart and table blocks can use different SQL queries. "
-            "For non-trivial analytics, return the full multi-SQL evidence pack in this first response."
+            "For non-trivial analytics, return the full multi-SQL evidence pack in this first response. "
+            "Return no more than 8 blocks and avoid duplicate chart/table blocks. "
+            "If the user asks for a chart, or the question is chartable (trend, breakdown, comparison, ranking, grouped/by/wise), include a `chart` block. "
+            "Chart SQL must be aggregated/chart-ready with readable label/time columns and numeric metric columns."
         ),
     )
 

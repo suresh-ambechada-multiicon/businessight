@@ -10,7 +10,6 @@ interface MainContentProps {
   onStop: () => void;
   isLoading: boolean;
   interactions: Interaction[];
-  theme: "light" | "dark";
   savedPrompts: SavedPrompt[];
   setSavedPrompts: React.Dispatch<React.SetStateAction<SavedPrompt[]>>;
 }
@@ -20,7 +19,6 @@ export const MainContent = memo(function MainContent({
   onStop,
   isLoading,
   interactions,
-  theme,
   savedPrompts,
   setSavedPrompts,
 }: MainContentProps) {
@@ -68,8 +66,6 @@ export const MainContent = memo(function MainContent({
                 idx={startIdx + mapIdx}
                 chartOverrides={chartOverrides}
                 setChartOverrides={setChartOverrides}
-                theme={theme}
-                savedPrompts={savedPrompts}
                 setSavedPrompts={setSavedPrompts}
               />
             ))}

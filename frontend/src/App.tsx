@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, memo } from "react";
+import { Database, Menu } from "lucide-react";
 import { Sidebar } from "./components/layout/Sidebar";
 import { MainContent } from "./components/layout/MainContent";
 import { SettingsModal } from "./components/modals/SettingsModal";
@@ -25,11 +26,9 @@ function App() {
       (localStorage.getItem("theme") as "light" | "dark" | "system") || "light"
     );
   });
-  const [effectiveTheme, setEffectiveTheme] = useState<"light" | "dark">(
-    "light",
-  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isManagePromptsOpen, setIsManagePromptsOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const [model, setModel] = useState(
     () => localStorage.getItem("model") || "google_genai:gemini-2.5-flash",
@@ -62,7 +61,6 @@ function App() {
       if (theme === "system") {
         isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       }
-      setEffectiveTheme(isDark ? "dark" : "light");
       document.body.classList.toggle("dark", isDark);
     };
     applyTheme();
@@ -110,7 +108,7 @@ function App() {
 
   const currentInteractions = useMemo(
     () =>
-      interactions.filter((i) => (i as any).session_id === currentSessionId),
+      interactions.filter((i) => i.session_id === currentSessionId),
     [interactions, currentSessionId],
   );
 
@@ -122,6 +120,20 @@ function App() {
 
   return (
     <div className="app-container">
+      <header className="mobile-topbar">
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setIsMobileSidebarOpen(true)}
+          aria-label="Open navigation"
+        >
+          <Menu size={20} />
+        </button>
+        <div className="mobile-brand">
+          <Database size={18} />
+          <span>BusinessDataSight</span>
+        </div>
+      </header>
+
       <Sidebar
         theme={theme}
         toggleTheme={toggleTheme}
@@ -132,6 +144,8 @@ function App() {
         onNewChat={handleNewChat}
         onDeleteSession={handleDeleteSession}
         openManagePrompts={openManagePrompts}
+        mobileOpen={isMobileSidebarOpen}
+        onMobileClose={() => setIsMobileSidebarOpen(false)}
       />
 
       <MainContent
@@ -139,7 +153,6 @@ function App() {
         onStop={handleStop}
         isLoading={isLoading}
         interactions={currentInteractions}
-        theme={effectiveTheme}
         savedPrompts={savedPrompts}
         setSavedPrompts={setSavedPrompts}
       />

@@ -10,6 +10,22 @@ from analytics.services.tokens import count_tokens
 logger = get_logger("pipeline")
 
 
+def public_error_message(error: Exception | str) -> str:
+    text = str(error or "").strip()
+    if not text:
+        return "Unexpected analysis failure."
+    lowered = text.lower()
+    parser_failure = (
+        "failed to parse analyticsresponse" in lowered
+        or "validation error for analyticsresponse" in lowered
+        or "output_parsing_failure" in lowered
+        or '"result_blocks"' in text[:2000]
+    )
+    if parser_failure:
+        return "The model returned an invalid analytics plan. Please try again or choose a stronger model."
+    return text if len(text) <= 500 else f"{text[:500]}..."
+
+
 class PipelineFinalizer:
     def __init__(self, *, history_entry, ctx):
         self.history_entry = history_entry
@@ -78,24 +94,37 @@ class PipelineFinalizer:
     def mark_error(self, error: Exception):
         if not self.history_entry:
             return
-        err_msg = str(error)
+        err_msg = public_error_message(error)
         self.history_entry.report = f"Error: {err_msg}"
         self.history_entry.execution_time = self.history_entry.execution_time or 0.1
         self.history_entry.save()
 
     def _usage(self, result: dict, budget: dict, model_config, stream_data: dict) -> dict:
         actual_usage = result.pop("_actual_usage", None) if isinstance(result, dict) else None
-        if not actual_usage and isinstance(stream_data, dict) and stream_data.get("usage"):
-            actual_usage = self._usage_from_stream(stream_data["usage"], model_config)
+        extra_usage = result.pop("_extra_usage", None) if isinstance(result, dict) else None
+        stream_usage = None
+        if isinstance(stream_data, dict) and stream_data.get("usage"):
+            stream_usage = self._usage_from_stream(stream_data["usage"], model_config)
 
         if self._has_usage(actual_usage):
-            return {
-                "input_tokens": int(actual_usage.get("input_tokens") or 0),
-                "output_tokens": int(actual_usage.get("output_tokens") or 0),
-                "thinking_tokens": int(actual_usage.get("thinking_tokens") or 0),
-                "estimated_cost": round(float(actual_usage.get("estimated_cost") or 0), 6),
-            }
-        return self._estimated_usage(result, budget, model_config, stream_data)
+            return self._normalize_usage(self.merge_usage(actual_usage, extra_usage))
+        if self._has_usage(stream_usage):
+            return self._normalize_usage(self.merge_usage(stream_usage, extra_usage))
+        return self._normalize_usage(
+            self.merge_usage(
+                self._estimated_usage(result, budget, model_config, stream_data),
+                extra_usage,
+            )
+        )
+
+    @staticmethod
+    def _normalize_usage(usage: dict) -> dict:
+        return {
+            "input_tokens": int(usage.get("input_tokens") or 0),
+            "output_tokens": int(usage.get("output_tokens") or 0),
+            "thinking_tokens": int(usage.get("thinking_tokens") or 0),
+            "estimated_cost": round(float(usage.get("estimated_cost") or 0), 6),
+        }
 
     @staticmethod
     def _usage_from_stream(stream_usage: dict, model_config) -> dict | None:

@@ -65,9 +65,7 @@ def _evidence_from_result(result: dict, *, max_rows_per_block: int = 80) -> dict
                     "This block is truncated. loaded_sample_rows is only the number of rows "
                     "loaded into the UI sample, not the total matching record count."
                 )
-            evidence_blocks.append(
-                evidence_block
-            )
+            evidence_blocks.append(evidence_block)
         elif kind == "chart" and block.get("sql_query"):
             chart = (
                 block.get("chart_config")
@@ -113,7 +111,8 @@ def _evidence_from_result(result: dict, *, max_rows_per_block: int = 80) -> dict
                     "loaded_sample_rows": block.get("loaded_sample_rows"),
                 }
                 for block in evidence_blocks
-                if int(block.get("row_count") or block.get("loaded_sample_rows") or 0) == 0
+                if int(block.get("row_count") or block.get("loaded_sample_rows") or 0)
+                == 0
             ],
         }
     return {"blocks": evidence_blocks}
@@ -154,7 +153,9 @@ def apply_verified_answer(result: dict, answer: dict) -> dict:
                         "text": str(insight.get("text") or "").strip(),
                     }
                 )
-            elif idx + 1 < len(existing_blocks) and existing_blocks[idx + 1].get("kind") in {"text", "summary"}:
+            elif idx + 1 < len(existing_blocks) and existing_blocks[idx + 1].get(
+                "kind"
+            ) in {"text", "summary"}:
                 out_blocks.append(existing_blocks[idx + 1])
                 idx += 1
         elif not overview and kind in {"text", "summary"}:

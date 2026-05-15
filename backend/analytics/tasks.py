@@ -23,6 +23,7 @@ from analytics.schemas import AnalyticsRequest
 from analytics.services.core import process_analytics_query
 from analytics.services.cache import get_db_uri_hash
 from analytics.services.pipeline.serialization import deep_sanitize, sanitize_row
+from analytics.services.pipeline.finalization import public_error_message
 from analytics.services.logger import RequestContext
 
 logger = logging.getLogger("analytics.tasks")
@@ -82,9 +83,10 @@ def process_query_task(self, payload_dict: dict, client_ip: str):
             exc_info=True,
             extra={"data": {**ctx.to_dict(), "error": str(e)[:200], "traceback": tb_str[:2000]}},
         )
-        _write_error(redis_client, stream_key, f"Analysis failed: {str(e)}")
+        public_error = public_error_message(e)
+        _write_error(redis_client, stream_key, f"Analysis failed: {public_error}")
         _write_done(redis_client, stream_key, self.request.id)
-        _mark_history_failed(ctx.task_id, f"Error: {str(e)}")
+        _mark_history_failed(ctx.task_id, f"Error: {public_error}")
 
     finally:
         # Expire heartbeat and stream after cleanup
@@ -125,5 +127,4 @@ def _mark_history_failed(task_id: str, error_msg: str):
         )
     except Exception:
         pass
-
 

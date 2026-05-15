@@ -135,6 +135,28 @@ def auto_generate_chart(chart_config, raw_data, query="") -> dict | list | None:
 
 def _auto_generate_single_chart(chart_config, raw_data, query="") -> dict | None:
     """Validate or synthesize one chart from ``raw_data``."""
+    allowed_types = {
+        "bar",
+        "stacked-bar",
+        "line",
+        "area",
+        "stacked-area",
+        "pie",
+        "radar",
+        "radial",
+        "scatter",
+        "composed",
+    }
+    requested_type = ""
+    requested_x_label = ""
+    requested_y_label = ""
+    if chart_config and isinstance(chart_config, dict):
+        requested_type = str(chart_config.get("type") or "").strip().lower()
+        if requested_type not in allowed_types:
+            requested_type = ""
+        requested_x_label = str(chart_config.get("x_label") or "").strip()
+        requested_y_label = str(chart_config.get("y_label") or "").strip()
+
     # First validate any AI-generated chart
     if chart_config and isinstance(chart_config, dict):
         data_obj = chart_config.get("data", {})
@@ -142,12 +164,6 @@ def _auto_generate_single_chart(chart_config, raw_data, query="") -> dict | None
         if has_content:
             # AI generated a chart — validate it (remove flag/boolean datasets)
             return _validate_chart_config(chart_config, raw_data)
-
-    # Check if user explicitly asked for a chart
-    is_explicit_request = any(
-        word in (query or "").lower()
-        for word in ["chart", "graph", "plot", "visualize"]
-    )
 
     if not raw_data or not isinstance(raw_data, list) or len(raw_data) < 2:
         return None
@@ -269,9 +285,9 @@ def _auto_generate_single_chart(chart_config, raw_data, query="") -> dict | None
 
                 if datasets:
                     return {
-                        "type": "line",
-                        "x_label": time_key.replace("_", " ").title(),
-                        "y_label": value_key.replace("_", " ").title(),
+                        "type": requested_type or "line",
+                        "x_label": requested_x_label or time_key.replace("_", " ").title(),
+                        "y_label": requested_y_label or value_key.replace("_", " ").title(),
                         "data": {"labels": times, "datasets": datasets},
                     }
 
@@ -331,7 +347,7 @@ def _auto_generate_single_chart(chart_config, raw_data, query="") -> dict | None
         if not datasets:
             return None
 
-        chart_type = (
+        chart_type = requested_type or (
             "line"
             if any(
                 k.lower() in label_key.lower()
@@ -339,12 +355,15 @@ def _auto_generate_single_chart(chart_config, raw_data, query="") -> dict | None
             )
             else "bar"
         )
+        y_label = requested_y_label or (
+            value_keys[0].replace("_", " ").title()
+            if len(value_keys) == 1
+            else "Value"
+        )
         chart_config = {
             "type": chart_type,
-            "x_label": label_key.replace("_", " ").title(),
-            "y_label": value_keys[0].replace("_", " ").title()
-            if len(value_keys) == 1
-            else "Value",
+            "x_label": requested_x_label or label_key.replace("_", " ").title(),
+            "y_label": y_label,
             "data": {"labels": labels, "datasets": datasets},
         }
 

@@ -6,6 +6,49 @@ from typing import Any
 from analytics.schemas import AnalyticsResponse, VerifiedAnswerResponse
 
 
+CHART_PLANNING_RULES = """Chart planning rules:
+- Return a `chart` block only when you intentionally want a visualization; backend will not invent chart blocks from tables.
+- Chart SQL must be aggregated/chart-ready, not raw detail rows: one label/time column plus one or more numeric metric columns, or period + category + numeric metric for multi-series charts.
+- Use readable aliases for label and metrics (`month`, `category_name`, `total_sales`, `order_count`). Avoid ID-only labels, booleans, flags, UUIDs, and raw row identifiers as chart metrics.
+- Use `line` for ordered time series (day/week/month/year + metric). Use `area` for cumulative or volume-over-time emphasis.
+- Use `bar` for category breakdowns, rankings, top/bottom lists, and comparisons across discrete groups.
+- Use `stacked-bar` or `stacked-area` for composition by category across periods or groups (period + category + metric, or multiple numeric series per label).
+- Use `pie` only for part-to-whole composition with 2-8 categories and one positive metric; otherwise prefer bar.
+- Use `composed` when the same x-axis needs different metric types together, such as count + amount.
+- Use `scatter` only for relationship/correlation between two numeric measures.
+- Limit chart rows to a readable set: usually top 10-20 categories or 12-36 periods. Put full detail/ranking rows in a separate table block.
+- In `chart_config`, set only `type`, `x_label`, and `y_label`; never include chart `data`.
+"""
+
+
+def runware_sql_planning_prompt(*, db_dialect: str, schema_context: str) -> str:
+    return f"""You are a senior data analyst. Produce a SQL evidence plan; backend executes SQL and writes final answer.
+
+Database dialect: {db_dialect}
+
+Schema context:
+{schema_context}
+
+Rules:
+- Return only structured JSON; no markdown wrapper.
+- Use only read-only SELECT/CTE SQL. Never mutate data.
+- Every table/chart block needs one `sql_query`. Do not include raw rows or chart data.
+- Never return a chart block without `sql_query`. Never repeat the same chart/table block.
+- Return at most 8 result_blocks total; 2-5 is preferred for non-trivial analytics.
+- Use exact table/column names from schema. Never use SELECT *.
+- User terms may be row values, not table/column names. Use value hints and backend `value_search` context when present.
+- Prefer readable joined names/codes/titles beside IDs when schema supports lookup/master tables.
+- Do not add filters the user did not ask for. If a value/join/amount/date is uncertain, include candidate SQL blocks instead of one fragile guess.
+- Simple count/list/show: one focused SQL is enough.
+- If user asks for chart/graph/plot/visual/visualize, include at least one `chart` block unless no numeric/time/category evidence exists.
+- For chartable questions (analysis, trend, breakdown, comparison, distribution, ranking/top/highest/lowest, grouped/by/wise/per), include at least one `chart` block plus one inspectable `table` block when data supports it.
+- Analysis/detail/trend/breakdown/ranking/grouped/by/wise: return 2-5 different SQL blocks in this first response: compact KPI/summary, useful chart-ready trend/breakdown, and supporting detail/ranking rows when available.
+- Avoid duplicate or near-duplicate SQL/result blocks.
+
+{CHART_PLANNING_RULES}
+"""
+
+
 def analytics_system_prompt(
     *,
     formatted_prompt: str,
@@ -17,6 +60,8 @@ def analytics_system_prompt(
         formatted_prompt
         + "\n\nReturn ONLY valid JSON matching this schema. Do not wrap it in markdown. "
         "Every table or chart block must include a read-only SELECT sql_query. "
+        "Never return a chart block without sql_query. Never return duplicate chart/table blocks. "
+        "Return at most 8 result_blocks total; prefer 2-5 for non-trivial analytics. "
         "Do not include raw rows or chart data; the backend will execute SQL. "
         "If the user supplied multiple exact SQL queries, return one separate table "
         "result_block per SQL query and preserve the supplied order. "
@@ -25,6 +70,13 @@ def analytics_system_prompt(
         "(analysis, detail, trend, comparison, breakdown, ranking, grouped/by/wise), return "
         "2-5 separate table/chart result_blocks with different SQL queries: compact KPI/summary, "
         "useful breakdown or trend, and supporting detail/ranking rows when available. "
+        "If the user asks for chart/graph/plot/visual/visualize, include at least one `chart` block "
+        "unless no numeric/time/category evidence exists. For chartable analysis, trend, breakdown, "
+        "comparison, distribution, ranking/top/highest/lowest, grouped/by/wise/per questions, include "
+        "at least one `chart` block plus one inspectable `table` block when data supports it. "
+        "For each chart block, choose the chart type from the chart planning rules already given: "
+        "line/area for time, bar for category/ranking, stacked variants for composition over periods, "
+        "pie only for small part-to-whole, composed for mixed metrics, scatter for two numeric measures. "
         "Use one SQL block only for simple count/list/show questions. "
         "Use the schema context exactly: it includes the active schema, column types, "
         "and Value Hints with sample distinct names/codes/statuses/categories. Match "
@@ -34,8 +86,8 @@ def analytics_system_prompt(
         "the schema provides one. "
         "For analytical or time-window questions, order result_blocks as: top full analytics "
         "summary, then each table/chart block immediately followed by a concise text/summary "
-        "explaining what that raw table or chart should help inspect. Tables and charts are optional; include only "
-        "blocks that add evidence. Chart SQL and table SQL can be different; make chart "
+        "explaining what that raw table or chart should help inspect. Charts are required when the user asks "
+        "for a visual or when the answer has a useful trend/category/ranking metric. Chart SQL and table SQL can be different; make chart "
         "SQL aggregated and visualization-friendly instead of reusing a raw/detail table. "
         "If a join key, category value, service value, or amount column is uncertain, "
         "bundle multiple candidate SQL table blocks in this same response rather than "

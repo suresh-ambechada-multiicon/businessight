@@ -179,7 +179,7 @@ def create_sql_executor(
                     tool_state["final_query_reason"] = "execute_final_sql"
                 return json.dumps({"cached": True, "data": data})
 
-            _status(f"Executing SQL: {query}")
+            _status("Executing database query...")
             start = time.time()
 
             with db._engine.connect() as conn:

@@ -58,8 +58,6 @@ interface InteractionItemProps {
   setChartOverrides: React.Dispatch<
     React.SetStateAction<Record<string, string>>
   >;
-  theme: "light" | "dark";
-  savedPrompts?: SavedPrompt[];
   setSavedPrompts?: React.Dispatch<React.SetStateAction<SavedPrompt[]>>;
 }
 
@@ -251,17 +249,6 @@ export const InteractionItem = memo(
                   )}
                   {block.kind === "table" && Array.isArray(block.raw_data) && block.raw_data.length > 0 && (
                     <>
-                      {/* {(typeof block.total_count === "number" || */}
-                      {/*   typeof block.row_count === "number" || */}
-                      {/*   block.truncated) && ( */}
-                      {/*     <div className="table-result-note"> */}
-                      {/*       {block.truncated */}
-                      {/*         ? `Showing ${block.raw_data.length.toLocaleString()} rows. Full count skipped for speed.` */}
-                      {/*         : typeof block.total_count === "number" && block.total_count > block.raw_data.length */}
-                      {/*           ? `Showing ${block.raw_data.length.toLocaleString()} of ${block.total_count.toLocaleString()} rows.` */}
-                      {/*           : `${(block.total_count ?? block.row_count ?? block.raw_data.length).toLocaleString()} rows.`} */}
-                      {/*     </div> */}
-                      {/*   )} */}
                       <RawDataTable
                         data={block.raw_data}
                         hasData={true}

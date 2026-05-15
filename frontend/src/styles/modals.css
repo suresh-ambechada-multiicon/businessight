@@ -183,3 +183,34 @@
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
 }
+
+@media (max-width: 768px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: var(--space-2);
+  }
+
+  .modal-content {
+    max-width: none;
+    max-height: 88vh;
+    overflow-y: auto;
+    padding: var(--space-4);
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-sm);
+  }
+
+  .modal-title,
+  .modal-title-row {
+    font-size: 1.05rem;
+  }
+
+  .prompt-item,
+  .prompt-edit-row,
+  .confirm-modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .modal-btn {
+    width: 100%;
+  }
+}

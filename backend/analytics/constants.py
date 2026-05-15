@@ -67,7 +67,8 @@ Database dialect: '{db_dialect}'.
 - **List with Count**: `result_blocks`: e.g. `summary` or `text` with totals/patterns, then `table` with the row-returning SELECT.
 - **Count ONLY**: Must use aggregate SQL (`COUNT(*)` or `COUNT(DISTINCT ...)`). Do **not** return raw/detail rows. Return a `summary` plus an optional single-row `table` block backed by the COUNT SQL.
 - **Detail / analytical / trend**: Use multiple evidence blocks when useful, not a single fixed table. Order must be: full analytics `summary` first, then each raw `table` block immediately followed by a short `summary`/`text` explaining that table, and each `chart` block immediately followed by a short `summary`/`text` explaining that chart. Tables and charts are optional; include them only when they add evidence.
-- Add `chart` blocks when aggregate/time/category views add useful insight; do not force charts for plain record lists.
+- Add `chart` blocks when aggregate/time/category views add useful insight. If the user asks for chart/graph/plot/visual/visualize, include at least one chart unless no numeric/time/category evidence exists. For chartable trend, breakdown, comparison, distribution, ranking/top/highest/lowest, grouped/by/wise/per questions, include at least one chart plus an inspectable table when data supports it. Do not force charts for plain record lists.
+- Chart type choice: line/area for time series, bar for category/ranking, stacked-bar/stacked-area for composition across periods/groups, pie only for 2-8 part-to-whole categories, composed for mixed metrics on one x-axis, scatter only for two numeric measures. Chart SQL must be aggregated/chart-ready with readable labels and numeric metrics; put raw detail in a separate table.
 - If the user asks for "which", "highest", "top", "lowest", ranking, or detail, always include a `table` block with the ranking/detail SQL so the user can inspect the actual rows. Add a chart only if there are enough rows to visualize.
 - For "highest/top/which" questions where the join key or filter value is uncertain, include 2-4 candidate ranking `table` blocks in one response instead of a single guessed SQL query. Avoid extra Runware/API calls by bundling these candidates as separate result blocks.
 - Chart data and table/raw data are independent. Use separate `sql_query` values when the best chart shape differs from the best inspection table.
@@ -81,6 +82,7 @@ Database dialect: '{db_dialect}'.
 **Structured response — `result_blocks` (required pattern):**
 - Build an **ordered** list of blocks. The UI renders them top-to-bottom. For data-backed answers use: full analytics summary first, then `table` plus table explanation, then `chart` plus chart explanation, repeated as needed. Omit blocks that are not useful.
 - Treat the first structured response as the full SQL plan. For non-trivial analytics, include 2-5 different SQL-backed `table`/`chart` blocks in the same response so the backend can execute them together. Do not depend on later model calls to discover basic context.
+- For chartable questions, include chart-ready aggregate SQL as a `chart` block, not just a table block.
 - **`kind: "text"` or `"summary"`**: markdown in `text` (and optional `title`).
 - **`kind: "table"`**: required **`sql_query`** (single read-only SELECT). Do **NOT** set `raw_data` — the server executes SQL and fills the grid.
 - **`kind: "chart"`**: required **`sql_query`** (SELECT whose rows drive the chart, usually aggregated). Optional **`chart_config`** with only **`type`**, **`x_label`**, **`y_label`** — never `data`, never numeric series in JSON. The server builds `data` from the query result.
@@ -123,10 +125,10 @@ MODEL_REGISTRY = {
         "google_genai", 1_000_000, 65_536, 0.25, 1.50
     ),
     "google_genai:gemini-2.5-pro": ModelConfig(
-        "google_genai", 1_000_000, 65_536, 0.25, 1.50
+        "google_genai", 1_000_000, 65_536, 1.25, 10.00
     ),
     "google_genai:gemini-2.5-flash": ModelConfig(
-        "google_genai", 1_000_000, 65_536, 0.25, 1.50
+        "google_genai", 1_000_000, 65_536, 0.30, 2.50
     ),
     # Runware-hosted Google models
     "runware:google-gemini-3-flash": ModelConfig(

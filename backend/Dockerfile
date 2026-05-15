@@ -3,7 +3,9 @@ FROM python:3.12-slim
 # Python standard env vars
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_CACHE_DIR=/home/appuser/.cache/uv
+    UV_CACHE_DIR=/home/appuser/.cache/uv \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -20,7 +22,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Sync dependencies
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev
 
 # Copy backend code
 COPY . .

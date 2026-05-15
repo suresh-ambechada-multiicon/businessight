@@ -15,11 +15,7 @@ from typing import Generator
 from django.core.cache import cache
 
 from analytics.models import QueryHistory
-from analytics.schemas import AnalyticsRequest, AnalyticsResponse
-from analytics.services.agent.logic.extraction import (
-    extract_final_result,
-    repair_missing_sql_result,
-)
+from analytics.schemas import AnalyticsRequest
 from analytics.services.agent.core.llm import build_messages, init_llm
 from analytics.services.agent.core.runware import (
     stream_runware_verified_report,
@@ -29,10 +25,7 @@ from analytics.services.agent.logic.reporting import (
     apply_verified_answer,
 )
 from analytics.services.agent.logic.schema_context import build_schema_context
-from analytics.services.agent.core.state import StreamResult
-from analytics.services.agent.core.streaming import stream_agent
 from analytics.services.agent.logic.table_retrieval import rank_tables_for_query
-from analytics.services.agent.tools import create_tools, sql_max_rows_from_budget
 from analytics.services.database.connection import (
     build_engine_args,
     create_database,
@@ -43,10 +36,11 @@ from analytics.services.database.connection import (
 )
 from analytics.services.llm import get_model_config
 from analytics.services.logger import RequestContext, get_logger
-from analytics.services.pipeline.hydration import hydrate_analytics_result
-from analytics.services.pipeline.finalization import PipelineFinalizer
+from analytics.services.pipeline.finalization import PipelineFinalizer, public_error_message
+from analytics.services.pipeline.llm_planning import invoke_llm_analytics_plan
 from analytics.services.pipeline.runware_loop import RunwareExecutionLoop
-from analytics.services.prompts import SYSTEM_PROMPT
+from analytics.services.pipeline.verified_answer import generate_verified_answer
+from analytics.services.runware.prompts import runware_sql_planning_prompt
 from analytics.services.sql_utils import (
     extract_sql_blocks_from_combined,
     format_sql_blocks,
@@ -127,8 +121,7 @@ class AnalyticsPipeline:
         ranked_tables = rank_tables_for_query(self.usable_tables, self.payload.query, self.ctx.db_uri_hash)
         schema_context = build_schema_context(self.usable_tables, self.active_schema, self.db, self.ctx, table_rank_order=ranked_tables)
         
-        formatted_prompt = SYSTEM_PROMPT.replace("{db_dialect}", detect_dialect(self.db_uri)).replace("{db_schema}", schema_context)
-        
+        db_dialect = detect_dialect(self.db_uri)
         agent_query = self.payload.query
         direct_sql_blocks = self._direct_sql_blocks()
         if direct_sql_blocks:
@@ -138,9 +131,14 @@ class AnalyticsPipeline:
                 f"and preserve their order:\n```sql\n{format_sql_blocks(direct_sql_blocks)}\n```"
             )
 
+        prompt_for_execution = runware_sql_planning_prompt(
+            db_dialect=db_dialect,
+            schema_context=schema_context,
+        )
+
         messages = build_messages(self.payload.session_id, agent_query)
-        budget = estimate_query_budget(model_config, formatted_prompt, messages)
-        tools, tool_state = create_tools(self.db, self.usable_tables, self.ctx, budget)
+        budget = estimate_query_budget(model_config, prompt_for_execution, messages)
+        tool_state = {"query_cache": {}}
 
         if model_config.provider == "runware":
             result, runware_usage = RunwareExecutionLoop(
@@ -151,9 +149,10 @@ class AnalyticsPipeline:
                 history_entry=self.history_entry,
                 is_cancelled=self._is_cancelled,
                 finalize_cancellation=self._finalize_cancellation,
+                planner_label="Runware",
             ).run(
                 exec_model=exec_model,
-                formatted_prompt=formatted_prompt,
+                formatted_prompt=prompt_for_execution,
                 agent_query=agent_query,
                 budget=budget,
                 tool_state=tool_state,
@@ -243,38 +242,53 @@ class AnalyticsPipeline:
                 },
             )
             return
-        
+
         llm = init_llm(exec_model, self.payload.api_key, self.payload.llm_config, self.ctx)
-        
-        from deepagents import create_deep_agent
-        agent = create_deep_agent(model=llm, tools=tools, system_prompt=formatted_prompt, response_format=AnalyticsResponse)
 
-        result_holder = StreamResult()
-        for chunk in stream_agent(agent, messages, self.payload.session_id, result_holder, self.ctx):
-            yield chunk
+        def llm_planner(**kwargs):
+            return invoke_llm_analytics_plan(
+                llm=llm,
+                model_config=model_config,
+                **kwargs,
+            )
 
-        if result_holder.cancelled:
+        result, planning_usage = RunwareExecutionLoop(
+            payload=self.payload,
+            ctx=self.ctx,
+            db=self.db,
+            usable_tables=self.usable_tables,
+            history_entry=self.history_entry,
+            is_cancelled=self._is_cancelled,
+            finalize_cancellation=self._finalize_cancellation,
+            planner=llm_planner,
+            planner_label="LLM",
+        ).run(
+            exec_model=exec_model,
+            formatted_prompt=prompt_for_execution,
+            agent_query=agent_query,
+            budget=budget,
+            tool_state=tool_state,
+        )
+        if self._is_cancelled():
             self._finalize_cancellation()
             return
 
-        if result_holder.has_error:
-            raise RuntimeError("Agent execution failed")
-
-        # Extraction & Hydration
-        result = extract_final_result(result_holder.data, tool_state, self.ctx)
-        if self._needs_sql_repair(result, tool_state):
-            send_status(self.ctx.task_id, "Recovering SQL from schema...")
-            repaired = repair_missing_sql_result(
-                llm,
-                formatted_prompt,
-                self.payload.query,
-                self.ctx,
-                repair_reason="Agent exited without a SQL query or final data block.",
-            )
-            if repaired and not self._needs_sql_repair(repaired, tool_state):
-                result = repaired
-        send_status(self.ctx.task_id, "Loading result data...")
-        result = hydrate_analytics_result(result, self.db, self.ctx, sql_max_rows_from_budget(budget), tool_state, user_query=self.payload.query)
+        send_status(self.ctx.task_id, "Writing final answer...")
+        verified_usage: dict = {}
+        verified_answer = generate_verified_answer(
+            llm=llm,
+            user_query=self.payload.query,
+            result=result,
+            model_config=model_config,
+            usage_sink=verified_usage,
+            ctx=self.ctx,
+        )
+        if verified_answer:
+            result = apply_verified_answer(result, verified_answer)
+        result["_actual_usage"] = PipelineFinalizer.merge_usage(
+            planning_usage,
+            verified_usage,
+        )
 
         yield from PipelineFinalizer(
             history_entry=self.history_entry,
@@ -283,20 +297,11 @@ class AnalyticsPipeline:
             result=result,
             budget=budget,
             model_config=model_config,
-            stream_data=result_holder.data,
+            stream_data={
+                "full_content": result.get("report", ""),
+                "full_tool_args_str": json.dumps(result.get("result_blocks") or []),
+            },
         )
-
-    def _needs_sql_repair(self, result: dict, tool_state: dict) -> bool:
-        """True when the agent produced neither executable SQL nor recovered SQL data."""
-        if result.get("sql_query"):
-            return False
-        for block in result.get("result_blocks") or []:
-            if isinstance(block, dict) and block.get("sql_query"):
-                return False
-        if tool_state.get("final_sql_query") or tool_state.get("last_sql_query"):
-            return False
-        report = str(result.get("report") or "").lower()
-        return "timed out before a sql query" in report or not report.strip()
 
     def _is_cancelled(self) -> bool:
         if cache.get(f"cancel_{self.payload.session_id}"):
@@ -326,9 +331,13 @@ class AnalyticsPipeline:
         PipelineFinalizer(history_entry=self.history_entry, ctx=self.ctx).cancel()
 
     def _handle_error(self, e: Exception) -> Generator[dict, None, None]:
-        err_msg = str(e)
-        logger.error("Pipeline error", exc_info=True, extra={"data": {**self.ctx.to_dict(), "error": err_msg}})
+        err_msg = public_error_message(e)
+        logger.error(
+            "Pipeline error",
+            exc_info=True,
+            extra={"data": {**self.ctx.to_dict(), "error": err_msg}},
+        )
         
         PipelineFinalizer(history_entry=self.history_entry, ctx=self.ctx).mark_error(e)
-             
+              
         yield {"event": "error", "data": {"message": f"Error: {err_msg}"}}

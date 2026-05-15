@@ -9,6 +9,7 @@ import {
   PlusCircle,
   Trash2,
   Command,
+  X,
 } from "lucide-react";
 
 interface Session {
@@ -26,6 +27,8 @@ interface SidebarProps {
   onNewChat: () => void;
   onDeleteSession: (id: string) => void;
   openManagePrompts: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
 export const Sidebar = memo(function Sidebar({
@@ -38,8 +41,34 @@ export const Sidebar = memo(function Sidebar({
   onNewChat,
   onDeleteSession,
   openManagePrompts,
+  mobileOpen = false,
+  onMobileClose,
 }: SidebarProps) {
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
+
+  const closeMobile = useCallback(() => {
+    onMobileClose?.();
+  }, [onMobileClose]);
+
+  const handleNewChat = useCallback(() => {
+    onNewChat();
+    closeMobile();
+  }, [closeMobile, onNewChat]);
+
+  const handleManagePrompts = useCallback(() => {
+    openManagePrompts();
+    closeMobile();
+  }, [closeMobile, openManagePrompts]);
+
+  const handleSettings = useCallback(() => {
+    openSettings();
+    closeMobile();
+  }, [closeMobile, openSettings]);
+
+  const handleSelectSession = useCallback((id: string) => {
+    onSelectSession(id);
+    closeMobile();
+  }, [closeMobile, onSelectSession]);
 
   const handleDeleteClick = useCallback((e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
@@ -58,18 +87,23 @@ export const Sidebar = memo(function Sidebar({
   }, []);
 
   return (
-    <aside className="sidebar">
+    <>
+    {mobileOpen && <button className="sidebar-backdrop" onClick={closeMobile} aria-label="Close navigation" />}
+    <aside className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}>
       <div className="sidebar-header">
         <Database size={24} />
         <span>BusinessDataSight</span>
+        <button className="mobile-close-btn" onClick={closeMobile} aria-label="Close navigation">
+          <X size={18} />
+        </button>
       </div>
 
       <div className="sidebar-content">
-        <button className="new-chat-btn" onClick={onNewChat}>
+        <button className="new-chat-btn" onClick={handleNewChat}>
           <PlusCircle size={18} />
           <span>New Chat</span>
         </button>
-        <button className="new-chat-btn new-chat-btn-secondary" onClick={openManagePrompts}>
+        <button className="new-chat-btn new-chat-btn-secondary" onClick={handleManagePrompts}>
           <Command size={18} />
           <span>Saved Prompts</span>
         </button>
@@ -85,7 +119,7 @@ export const Sidebar = memo(function Sidebar({
               <button
                 key={session.id}
                 className={`history-item ${session.id === currentSessionId ? "active" : ""}`}
-                onClick={() => onSelectSession(session.id)}
+                onClick={() => handleSelectSession(session.id)}
               >
                 <span className="history-item-text history-item-text-full">
                   {session.title}
@@ -116,7 +150,7 @@ export const Sidebar = memo(function Sidebar({
           </span>
         </button>
 
-        <button className="action-btn" onClick={openSettings}>
+        <button className="action-btn" onClick={handleSettings}>
           <Settings size={18} />
           <span>Settings</span>
         </button>
@@ -130,5 +164,6 @@ export const Sidebar = memo(function Sidebar({
         onConfirm={handleConfirmDelete}
       />
     </aside>
+    </>
   );
 });

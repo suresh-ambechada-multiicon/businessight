@@ -29,7 +29,12 @@ def _qualified_table(schema: str | None, table_name: str, dialect: str) -> str:
 
 
 def _parse_columns_from_info(col_info: str) -> list[tuple[str, str]]:
-    _, _, tail = (col_info or "").partition(" columns: ")
+    raw = col_info or ""
+    if " columns: " in raw:
+        _, _, tail = raw.partition(" columns: ")
+    else:
+        _, _, after_open = raw.partition("(")
+        tail, _, _ = after_open.rpartition(")")
     cols: list[tuple[str, str]] = []
     for part in tail.split(", "):
         name, _, type_name = part.partition(" ")
@@ -37,6 +42,34 @@ def _parse_columns_from_info(col_info: str) -> list[tuple[str, str]]:
         if name:
             cols.append((name, type_name.strip()))
     return cols
+
+
+def _compact_type(type_name: str) -> str:
+    t = str(type_name or "").lower()
+    if any(x in t for x in ("char", "text", "string", "clob")):
+        return "text"
+    if "uniqueidentifier" in t or "uuid" in t:
+        return "uuid"
+    if any(x in t for x in ("bigint", "smallint", "tinyint", "int")):
+        return "int"
+    if any(x in t for x in ("decimal", "numeric", "money", "float", "real", "double")):
+        return "num"
+    if "bool" in t or t == "bit":
+        return "bool"
+    if "timestamp" in t or "datetime" in t:
+        return "datetime"
+    if "date" in t:
+        return "date"
+    if "time" in t:
+        return "time"
+    return re.split(r"[\s(]+", t.strip(), maxsplit=1)[0][:18] or "any"
+
+
+def _format_table_columns(table_name: str, columns: list[tuple[str, str]]) -> str:
+    if not columns:
+        return f"{table_name}()"
+    col_text = ", ".join(f"{name} {_compact_type(type_name)}" for name, type_name in columns)
+    return f"{table_name}({col_text})"
 
 
 def _should_sample_values(column_name: str, type_name: str) -> bool:
@@ -61,9 +94,8 @@ def build_schema_context(
     """
     Build the schema context string that gets injected into the system prompt.
 
-    Always include full column details for every usable table. This can be
-    expensive on large databases, but it gives the report agent complete schema
-    visibility and avoids guessing from a partial table list.
+    Include every usable table, but use compact schema text to cut input tokens
+    without hiding columns or useful type categories from the model.
     """
     from analytics.services.cache import (
         get_cached_schema_context,
@@ -74,7 +106,7 @@ def build_schema_context(
 
     db_uri_hash = ctx.db_uri_hash if ctx else ""
     schema_name = active_schema or getattr(db, "_schema", None) or "__default__"
-    schema_cache_key = f"{db_uri_hash}:{schema_name}"
+    schema_cache_key = f"v2:{db_uri_hash}:{schema_name}"
 
     has_query_specific_order = bool(table_rank_order)
     use_full_context_cache = not skip_full_context_cache and not has_query_specific_order
@@ -123,9 +155,9 @@ def build_schema_context(
                             f"WHERE c.object_id = OBJECT_ID('{full_name}')"
                         )
                     )
-                    cols = [f"{row[0]} {row[1]}" for row in result]
+                    cols = [(str(row[0]), str(row[1])) for row in result]
                     if cols:
-                        col_str = f"Table '{table_name}' columns: {', '.join(cols)}"
+                        col_str = _format_table_columns(table_name, cols)
         except Exception:
             pass
 
@@ -136,10 +168,10 @@ def build_schema_context(
 
                 db_inspector = sa_inspect(db._engine)
                 columns = db_inspector.get_columns(table_name, schema=db._schema)
-                cols_str = ", ".join([f"{c['name']} {str(c['type'])}" for c in columns])
-                col_str = f"Table '{table_name}' columns: {cols_str}"
+                cols = [(str(c["name"]), str(c["type"])) for c in columns]
+                col_str = _format_table_columns(table_name, cols)
             except Exception:
-                col_str = f"Table '{table_name}': (schema unavailable)"
+                col_str = f"{table_name}(schema unavailable)"
 
         # Cache per-table result
         if db_uri_hash and col_str:
@@ -156,7 +188,7 @@ def build_schema_context(
             (name, type_name)
             for name, type_name in columns
             if _should_sample_values(name, type_name)
-        ][:6]
+        ][:4]
         if not candidates:
             return ""
 
@@ -170,14 +202,14 @@ def build_schema_context(
                     col_ref = _quote_ident(col_name, dialect)
                     if "mssql" in dialect:
                         sql = (
-                            f"SELECT DISTINCT TOP 12 {col_ref} AS value "
+                            f"SELECT DISTINCT TOP 8 {col_ref} AS value "
                             f"FROM {table_ref} WHERE {col_ref} IS NOT NULL ORDER BY {col_ref}"
                         )
                     else:
                         sql = (
                             f"SELECT DISTINCT {col_ref} AS value "
                             f"FROM {table_ref} WHERE {col_ref} IS NOT NULL "
-                            f"ORDER BY {col_ref} LIMIT 12"
+                            f"ORDER BY {col_ref} LIMIT 8"
                         )
                     try:
                         values = []
@@ -187,9 +219,9 @@ def build_schema_context(
                                 continue
                             text_value = str(value).strip()
                             if text_value:
-                                values.append(text_value[:80])
+                                values.append(text_value[:48])
                         if values:
-                            hints.append(f"{col_name}: {', '.join(values)}")
+                            hints.append(f"{table_name}.{col_name}: {', '.join(values)}")
                     except Exception:
                         continue
         except Exception:
@@ -197,14 +229,13 @@ def build_schema_context(
 
         if not hints:
             return ""
-        return f"Table '{table_name}' value hints: " + " | ".join(hints)
+        return " | ".join(hints)
 
     schema_context = ""
     if active_schema:
         schema_context += (
-            f"Active Schema: {active_schema}\n"
-            f"Use schema `{active_schema}` for table references when qualifying names. "
-            "Do not use `public` unless it is explicitly listed as the active schema.\n\n"
+            f"Active schema: {active_schema}. Qualify tables with `{active_schema}`; "
+            "do not use `public` unless active.\n\n"
         )
 
     ordered_tables = usable_tables
@@ -214,7 +245,7 @@ def build_schema_context(
         ordered_tables = [*ranked, *remaining]
 
     lines = [_get_table_columns(t) for t in ordered_tables]
-    schema_context += "Detailed Schema:\n" + "\n".join(lines)
+    schema_context += "Schema:\n" + "\n".join(lines)
 
     hint_tables = ordered_tables[:8]
     value_hint_lines = []
@@ -226,8 +257,7 @@ def build_schema_context(
             value_hint_lines.append(hint)
     if value_hint_lines:
         schema_context += (
-            "\n\nValue Hints (sample distinct values for likely lookup/status/code/name columns; "
-            "not exhaustive, use them to match exact database vocabulary):\n"
+            "\n\nValue hints (samples, not exhaustive; match exact DB vocabulary):\n"
             + "\n".join(value_hint_lines)
         )
 
@@ -236,7 +266,7 @@ def build_schema_context(
         set_cached_schema_context(schema_cache_key, schema_context)
 
     _ctx = ctx.to_dict() if ctx else {}
-    mode = "full_detailed"
+    mode = "compact_full"
     logger.info(
         "Schema context built",
         extra={

@@ -7,6 +7,7 @@ from analytics.services.agent.tools import sql_max_rows_from_budget
 from analytics.services.database.value_search import search_database_values
 from analytics.services.pipeline.hydration import hydrate_analytics_result
 from analytics.services.runware import invoke_runware_analytics
+from analytics.services.runware.parsing import sanitize_analytics_payload
 from analytics.services.sql_utils import normalize_sql_key
 from analytics.services.status import send_status
 
@@ -34,6 +35,8 @@ class RunwareExecutionLoop:
         history_entry,
         is_cancelled: Callable[[], bool],
         finalize_cancellation: Callable[[], None],
+        planner: Callable[..., dict] | None = None,
+        planner_label: str = "Runware",
     ):
         self.payload = payload
         self.ctx = ctx
@@ -42,6 +45,8 @@ class RunwareExecutionLoop:
         self.history_entry = history_entry
         self.is_cancelled = is_cancelled
         self.finalize_cancellation = finalize_cancellation
+        self.planner = planner or invoke_runware_analytics
+        self.planner_label = planner_label
 
     def run(
         self,
@@ -64,7 +69,7 @@ class RunwareExecutionLoop:
 
             is_first = round_idx == 0
             if is_first:
-                send_status(self.ctx.task_id, "Generating SQL evidence pack with Runware...")
+                send_status(self.ctx.task_id, f"Generating SQL evidence pack with {self.planner_label}...")
                 value_search = search_database_values(
                     self.db,
                     user_query=self.payload.query,
@@ -88,7 +93,7 @@ class RunwareExecutionLoop:
             else:
                 send_status(
                     self.ctx.task_id,
-                    f"Reviewing executed results with Runware ({round_idx + 1}/{max_rounds})...",
+                    f"Reviewing executed results with {self.planner_label} ({round_idx + 1}/{max_rounds})...",
                 )
                 followup_context = self.followup_context(result or {}, executed_sql_keys)
                 if self.needs_sql_retry(result or {}):
@@ -104,7 +109,7 @@ class RunwareExecutionLoop:
                     else None
                 )
 
-            planned = invoke_runware_analytics(
+            planned = self.planner(
                 model=exec_model,
                 api_key=self.payload.api_key,
                 formatted_prompt=formatted_prompt,
@@ -118,8 +123,10 @@ class RunwareExecutionLoop:
             )
             runware_usage = self.merge_usage(
                 runware_usage,
+                planned.pop("_planner_usage", {}) if isinstance(planned, dict) else {},
                 planned.pop("_runware_usage", {}) if isinstance(planned, dict) else {},
             )
+            planned = sanitize_analytics_payload(planned if isinstance(planned, dict) else {})
 
             send_status(
                 self.ctx.task_id,
